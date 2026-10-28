@@ -9,6 +9,9 @@ import numpy as np
 from rich.console import Console
 from rich.table import Table
 
+from ffsim.decisions.lineup import LineupOption
+from ffsim.decisions.trades import TradeResult
+from ffsim.decisions.waivers import WaiverOption
 from ffsim.league import LeagueState, Team
 from ffsim.model.errors import ErrorModel
 from ffsim.model.models import ModelSet
@@ -246,3 +249,105 @@ def correlation_table(diags: list[dict[str, Any]]) -> Table:
             f"{d['n']:,}",
         )
     return t
+
+
+def fmt_delta(d: float, se: float) -> str:
+    """Percentage-point change with its standard error; dimmed if within noise."""
+    text = f"{100 * d:+.2f} ± {100 * se:.2f}"
+    return f"[dim]{text}[/dim]" if abs(d) < 2 * se or (d == 0 and se == 0) else text
+
+
+def lineup_table(options: list[LineupOption], state: LeagueState, week: int) -> Table:
+    t = Table(title=f"Week {week} lineup options (Δ vs. projection-optimal lineup)")
+    for col in ("Option", "Δ Title odds (pts)", "Δ Playoffs", "P(win wk)", "Avg", "10th–90th"):
+        t.add_column(col, justify="left" if col == "Option" else "right")
+    for o in options:
+        t.add_row(
+            o.label,
+            fmt_delta(o.delta.champion, o.delta.champion_se),
+            fmt_delta(o.delta.playoffs, o.delta.playoffs_se),
+            _pct(o.p_win),
+            f"{o.mean:.1f}",
+            f"{o.p10:.0f}–{o.p90:.0f}",
+            style="bold" if o.is_baseline else None,
+        )
+    return t
+
+
+def waiver_table(options: list[WaiverOption], state: LeagueState, faab: bool) -> Table:
+    t = Table(title="Waiver pickups (Δ title odds vs. no move)")
+    cols = ["Add", "Drop", "Δ Title odds (pts)", "Δ Playoffs", "ROS pts +/−"]
+    if faab:
+        cols += ["Rivals", "Bid"]
+    for col in cols:
+        t.add_column(col, justify="left" if col in {"Add", "Drop"} else "right")
+    for o in options:
+        row = [
+            _player_label(state, o.add),
+            _player_label(state, o.drop) if o.drop else "(open spot)",
+            fmt_delta(o.delta.champion, o.delta.champion_se),
+            fmt_delta(o.delta.playoffs, o.delta.playoffs_se),
+            f"{o.ros_add:.0f} / {o.ros_drop:.0f}",
+        ]
+        if faab:
+            row += [str(len(o.rivals)) if o.bid is not None else "", f"${o.bid}" if o.bid else ""]
+        t.add_row(*row)
+    return t
+
+
+def trade_table(results: list[TradeResult], state: LeagueState) -> Table:
+    t = Table(title="Trade ideas (Δ title odds; both sides)")
+    for col in (
+        "Partner",
+        "You give",
+        "You get",
+        "Δ You",
+        "Δ Them",
+        "Δ Your lineup",
+        "Δ Their lineup",
+    ):
+        t.add_column(col, justify="left" if col in {"Partner", "You give", "You get"} else "right")
+    for r in results:
+        t.add_row(
+            state.teams[r.partner].label,
+            ", ".join(state.player(p).name for p in r.give),
+            ", ".join(state.player(p).name for p in r.get),
+            fmt_delta(r.me.champion, r.me.champion_se),
+            fmt_delta(r.partner_delta.champion, r.partner_delta.champion_se),
+            f"{r.my_lineup_delta:+.0f}",
+            f"{r.partner_lineup_delta:+.0f}",
+        )
+    return t
+
+
+def trade_detail(r: TradeResult, state: LeagueState, me: Team) -> Table:
+    partner = state.teams[r.partner]
+    t = Table(title=f"Trade with {partner.label}")
+    t.add_column("")
+    t.add_column(me.label, justify="right")
+    t.add_column(partner.label, justify="right")
+    names = lambda ps: ", ".join(state.player(p).name for p in ps) or "—"  # noqa: E731
+    t.add_row("Receives", names(r.get), names(r.give))
+    t.add_row("Auto-drops (roster limit)", names(r.my_drops), names(r.partner_drops))
+    t.add_row(
+        "Δ Title odds (pts)",
+        fmt_delta(r.me.champion, r.me.champion_se),
+        fmt_delta(r.partner_delta.champion, r.partner_delta.champion_se),
+    )
+    t.add_row(
+        "Δ Playoff odds (pts)",
+        fmt_delta(r.me.playoffs, r.me.playoffs_se),
+        fmt_delta(r.partner_delta.playoffs, r.partner_delta.playoffs_se),
+    )
+    t.add_row(
+        "Δ Projected lineup pts (rest of season)",
+        f"{r.my_lineup_delta:+.1f}",
+        f"{r.partner_lineup_delta:+.1f}",
+    )
+    return t
+
+
+def _player_label(state: LeagueState, pid: str) -> str:
+    p = state.player(pid)
+    tag = "/".join(p.fantasy_positions) or (p.position or "?")
+    return f"{p.name} ({tag}, {p.team or 'FA'})"

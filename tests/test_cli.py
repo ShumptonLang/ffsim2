@@ -48,3 +48,36 @@ def test_odds_command():
     assert "Season outlook (2,000 simulations)" in res.output
     assert "#1" in res.output and "Out" in res.output  # seed distribution table
     assert "default (run `ffsim fit`)" in res.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["lineup", "-l", LEAGUE_ID, "-m", "manager1", "-n", "300"],
+        ["waivers", "-l", LEAGUE_ID, "-m", "manager1", "-n", "300", "--top", "3"],
+        ["trade", "-l", LEAGUE_ID, "-m", "1", "-n", "300", "--give", "T1 WR4", "--get", "T2 WR4"],
+        ["find-trades", "-l", LEAGUE_ID, "-m", "1", "-n", "300", "--max-size", "1"],
+        ["plan", "-l", LEAGUE_ID, "-m", "1", "-n", "300"],
+    ],
+)
+def test_decision_commands_run(args):
+    res = runner.invoke(cli.app, args)
+    assert res.exit_code == 0, res.output
+    assert "Δ" in res.output or "No acceptable trade" in res.output
+
+
+def test_waivers_lists_free_agent():
+    res = runner.invoke(cli.app, ["waivers", "-l", LEAGUE_ID, "-m", "1", "-n", "300"])
+    assert "Free Agent" in res.output and "(open spot)" in res.output
+
+
+def test_trade_reports_both_sides():
+    res = runner.invoke(
+        cli.app,
+        ["trade", "-l", LEAGUE_ID, "-m", "1", "-n", "300", "--give", "T1 WR4", "--get", "T2 WR4"],
+    )
+    assert "Trade with Team Number 2" in res.output
+    bad = runner.invoke(
+        cli.app, ["trade", "-l", LEAGUE_ID, "-m", "1", "--give", "nobody", "--get", "T2 WR4"]
+    )
+    assert bad.exit_code == 1 and "matches 0" in bad.output

@@ -10,57 +10,16 @@ from ffsim.league import (
 )
 from ffsim.model.availability import AvailabilityModel
 from ffsim.model.bayes import TalentModel
-from ffsim.model.correlation import CorrelationModel
 from ffsim.model.models import ModelSet
-from ffsim.sim.engine import _team_scores, prepare, simulate
-from ffsim.sim.inputs import SimInputs, build_inputs
+from ffsim.sim.engine import Evaluator, _team_scores, simulate
+from ffsim.sim.inputs import build_inputs
 from tests.conftest import LEAGUE_ID
+from tests.synth import independent, synthetic_inputs
 
 
 @pytest.fixture(scope="module")
 def model():
     return ModelSet.default()
-
-
-def independent(models: ModelSet) -> ModelSet:
-    """No talent persistence or injuries (milestone 2 behaviour)."""
-    return ModelSet(
-        models.errors,
-        TalentModel(default_rho=0.0),
-        AvailabilityModel(default_hazard=0.0),
-        CorrelationModel(),
-    )
-
-
-def synthetic_inputs(n_teams=6, weeks=(10, 11, 12), playoff_teams=4, strengths=None, base=None):
-    strengths = strengths or [10.0] * n_teams
-    po = PlayoffFormat(playoff_teams, 13, PlayoffRoundType.ONE_WEEK, PlayoffSeedType.FIXED)
-    all_weeks = list(weeks) + [w for r in po.round_weeks() for w in r]
-    rosters, means, positions = {}, {}, {}
-    for t in range(n_teams):
-        ids = [f"t{t}_{k}" for k in range(3)]
-        rosters[t + 1] = ids
-        for p in ids:
-            positions[p] = ("WR",)
-    for w in all_weeks:
-        means[w] = {p: strengths[int(p[1:].split("_")[0])] for p in positions}
-    pairs = [(i, n_teams - 1 - i) for i in range(n_teams // 2)]
-    return SimInputs(
-        team_ids=list(range(1, n_teams + 1)),
-        team_labels=[f"T{i}" for i in range(n_teams)],
-        rosters=rosters,
-        slots=["WR", "WR", "FLEX"],
-        weeks=all_weeks,
-        regular_weeks=list(weeks),
-        playoffs=po,
-        matchups={w: pairs for w in weeks},
-        base_half_wins=np.array(base if base is not None else [0.0] * n_teams),
-        base_points_for=np.zeros(n_teams),
-        divisions=[],
-        median_match=False,
-        means=means,
-        positions=positions,
-    )
 
 
 def test_identical_teams_have_equal_title_odds(model):
@@ -199,21 +158,11 @@ def _stack_inputs():
 
 def test_stacked_team_has_wider_score_distribution(model):
     inp = _stack_inputs()
-    prep = prepare(inp, model)
-    from ffsim.model.correlation import sample_weekly
-
-    rng = np.random.default_rng(0)
-    z = sample_weekly(rng, 50_000, prep.layouts[0])
-    pts = model.errors.sample(z, prep.means[0][None, :], prep.positions)
-    avail = np.ones_like(pts, dtype=bool)
-    scores = _team_scores(pts, avail, prep.plans[0])
+    scores = Evaluator(inp, model, n_sims=40_000, seed=0).base_team_pts[:, 0, :]
     assert scores[:, 0].mean() == pytest.approx(scores[:, 1].mean(), rel=0.02)
     assert scores[:, 0].std() > 1.08 * scores[:, 1].std()
     # without correlation the two teams are statistically identical
-    ind = prepare(inp, independent(model))
-    z = sample_weekly(rng, 50_000, ind.layouts[0])
-    pts = model.errors.sample(z, ind.means[0][None, :], ind.positions)
-    s2 = _team_scores(pts, avail, ind.plans[0])
+    s2 = Evaluator(inp, independent(model), n_sims=40_000, seed=0).base_team_pts[:, 0, :]
     assert s2[:, 0].std() == pytest.approx(s2[:, 1].std(), rel=0.03)
 
 

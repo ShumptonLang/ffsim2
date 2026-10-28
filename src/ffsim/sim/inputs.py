@@ -6,7 +6,7 @@ stay vectorized and decision modules can swap rosters cheaply.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -44,6 +44,8 @@ class SimInputs:
     # week -> player_id -> (NFL team, opponent) / correlation role
     nfl_games: dict[int, dict[str, tuple[str, str]]] = field(default_factory=dict)
     roles: dict[int, dict[str, str]] = field(default_factory=dict)
+    free_agents: list[str] = field(default_factory=list)  # candidate pickups, best first
+    roster_capacity: int = 0  # lineup-eligible roster spots (excludes IR / taxi)
 
     @property
     def n_teams(self) -> int:
@@ -56,32 +58,49 @@ class SimInputs:
         """Copy with some rosters replaced (for trade / waiver evaluation)."""
         return replace(self, rosters={**self.rosters, **rosters})
 
-    def lineup_plans(self) -> dict[int, dict[int, list[list[str]]]]:
-        """week -> roster_id -> per starting slot, candidates in order of preference.
+    @property
+    def universe(self) -> list[str]:
+        """Every player the simulation may need: rostered players plus free agents."""
+        seen = {p for ps in self.rosters.values() for p in ps}
+        return sorted(seen | set(self.free_agents))
 
-        The first candidate is the projection-optimal starter (if any); the rest
-        are eligible bench players by projection, used when the starter is out.
+    def ros_points(self, player_id: str, weeks: list[int] | None = None) -> float:
+        """Projected points over the remaining simulated weeks (or the given weeks)."""
+        return sum(self.means.get(w, {}).get(player_id, 0.0) for w in (weeks or self.weeks))
+
+    def team_plan(
+        self, week: int, players: list[str], starters: list[str | None] | None = None
+    ) -> list[list[str]]:
+        """Per starting slot, candidates in order of preference for one team-week.
+
+        The first candidate is the starter: ``starters`` (one per slot) when given,
+        else the projection-optimal lineup. The rest are eligible bench players by
+        projection, used when the starter turns out to be unavailable.
         """
-        out: dict[int, dict[int, list[list[str]]]] = {}
-        for w in self.weeks:
-            m = self.means.get(w, {})
-            out[w] = {}
-            for rid, players in self.rosters.items():
-                lineup = best_lineup(self.slots, players, m, self.positions)
-                starters = {p for p in lineup if p}
-                bench = sorted(
-                    (p for p in players if p not in starters and m.get(p, 0.0) > 0),
-                    key=lambda p: -m.get(p, 0.0),
-                )
-                plan = []
-                for slot, starter in zip(self.slots, lineup, strict=True):
-                    ok = SLOT_ELIGIBILITY.get(slot, frozenset())
-                    backups = [
-                        p for p in bench if any(fp in ok for fp in self.positions.get(p, ()))
-                    ]
-                    plan.append(([starter] if starter else []) + backups)
-                out[w][rid] = plan
-        return out
+        m = self.means.get(week, {})
+        lineup = (
+            starters
+            if starters is not None
+            else best_lineup(self.slots, players, m, self.positions)
+        )
+        chosen = {p for p in lineup if p}
+        bench = sorted(
+            (p for p in players if p not in chosen and m.get(p, 0.0) > 0),
+            key=lambda p: -m.get(p, 0.0),
+        )
+        plan = []
+        for slot, starter in zip(self.slots, lineup, strict=True):
+            ok = SLOT_ELIGIBILITY.get(slot, frozenset())
+            backups = [p for p in bench if any(fp in ok for fp in self.positions.get(p, ()))]
+            plan.append(([starter] if starter else []) + backups)
+        return plan
+
+    def lineup_plans(self) -> dict[int, dict[int, list[list[str]]]]:
+        """week -> roster_id -> per starting slot, candidates in order of preference."""
+        return {
+            w: {rid: self.team_plan(w, players) for rid, players in self.rosters.items()}
+            for w in self.weeks
+        }
 
     def lineups(self) -> dict[int, dict[int, list[str]]]:
         """week -> roster_id -> starting player ids (projection-optimal)."""
@@ -164,7 +183,14 @@ def build_inputs(
     source: ProjectionSource,
     winners_bracket: list[dict] | None = None,
     talent: TalentModel | None = None,
+    n_free_agents: int = 0,
 ) -> SimInputs:
+    """Assemble simulation inputs.
+
+    ``n_free_agents`` > 0 also brings in that many of the best unrostered players
+    per starting position (by projected points over the simulated weeks), so
+    waiver pickups can be evaluated against the same random draws.
+    """
     lg = state.league
     po = lg.playoffs
     first = lg.last_scored_week + 1
@@ -195,10 +221,14 @@ def build_inputs(
         )
         for w, wg in games.items()
     }
+    free_agents: list[str] = []
+    if n_free_agents and weeks:
+        free_agents = _free_agents(state, sleeper, rostered, lg.starter_slots, n_free_agents)
+    universe = rostered | set(free_agents)
     rates: dict[str, float] = {}
     means = sleeper
     if talent is not None and weeks:
-        rates = player_rates(state, source, talent, rostered)
+        rates = player_rates(state, source, talent, universe)
         means = {
             w: {
                 p: talent.centre(state.player(p).primary_position, m, rates.get(p))
@@ -208,7 +238,7 @@ def build_inputs(
         }
     statuses: dict[str, str] = {}
     if weeks and weeks[0] == state.nfl_week:
-        for p in rostered:
+        for p in universe:
             st = state.player(p).injury_status
             if st:
                 statuses[p] = st
@@ -226,7 +256,7 @@ def build_inputs(
         divisions=[t.division for t in teams] if lg.divisions else [],
         median_match=bool(lg.raw_settings.get("league_average_match")),
         means=means,
-        positions={p: state.player(p).fantasy_positions for p in rostered},
+        positions={p: state.player(p).fantasy_positions for p in universe},
         forced_playoff_winners=forced,
         actual_points={
             w: np.array([pts.get(r, 0.0) for r in team_ids])
@@ -234,7 +264,34 @@ def build_inputs(
         },
         statuses=statuses,
         sleeper_means=sleeper,
-        nfl_games={w: {p: g for p, g in wg.items() if p in rostered} for w, wg in games.items()},
-        roles={w: {p: r for p, r in wr.items() if p in rostered} for w, wr in roles.items()},
+        nfl_games={w: {p: g for p, g in wg.items() if p in universe} for w, wg in games.items()},
+        roles={w: {p: r for p, r in wr.items() if p in universe} for w, wr in roles.items()},
         rates=rates,
+        free_agents=free_agents,
+        roster_capacity=sum(1 for s in lg.roster_positions if s not in ("IR", "TAXI")),
     )
+
+
+def _free_agents(
+    state: LeagueState,
+    sleeper: Mapping[int, Mapping[str, float]],
+    rostered: set[str],
+    slots: Sequence[str],
+    per_position: int,
+) -> list[str]:
+    """Best unrostered players at each position that can start in this league."""
+    startable = {p for s in slots for p in SLOT_ELIGIBILITY.get(s, ())}
+    totals: dict[str, float] = {}
+    for wm in sleeper.values():
+        for pid, m in wm.items():
+            if pid not in rostered and m > 0:
+                totals[pid] = totals.get(pid, 0.0) + m
+    by_pos: dict[str, list[tuple[float, str]]] = {}
+    for pid, tot in totals.items():
+        pos = state.player(pid).primary_position
+        if pos in startable:
+            by_pos.setdefault(pos, []).append((tot, pid))
+    out: list[tuple[float, str]] = []
+    for members in by_pos.values():
+        out.extend(sorted(members, reverse=True)[:per_position])
+    return [pid for _, pid in sorted(out, reverse=True)]
