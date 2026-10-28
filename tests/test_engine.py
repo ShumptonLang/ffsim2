@@ -194,9 +194,49 @@ def test_bye_in_last_published_week_does_not_carry_forward():
     source = SimpleNamespace(weekly_projections=lambda season, w: published.get(w, {}))
     state = SimpleNamespace(
         league=SimpleNamespace(season=2025, scoring_settings={"rec": 1.0}),
-        player=lambda pid: SimpleNamespace(primary_position="WR"),
+        player=lambda pid: SimpleNamespace(primary_position="WR", injury_status=None),
     )
-    means, games = week_means(source, state, [6, 7, 8])
+    means, games, returning = week_means(source, state, [6, 7, 8])
     assert means[7] == {"a": 0.0, "b": 0.0}  # a on bye, b out with his team playing
     assert means[8] == {"a": 10.0, "b": 0.0}  # a's bye stays in week 7
-    assert games[8] == {}
+    assert games[8] == {} and returning == {}
+
+
+def test_injured_player_projected_again_after_last_published_week():
+    from types import SimpleNamespace
+
+    from ffsim.data.projections import PlayerWeek
+    from ffsim.sim.inputs import week_means
+
+    def pw(pid, week, rec, team, opp):
+        return PlayerWeek(pid, 2025, week, {"rec": rec} if rec else {}, team, opp)
+
+    published = {
+        5: {"a": pw("a", 5, 12, "LAR", "SF"), "c": pw("c", 5, 6, "LAR", "SF")},
+        6: {"a": pw("a", 6, 0, "LAR", "BAL"), "c": pw("c", 6, 0, "LAR", "BAL")},
+        7: {"a": pw("a", 7, 0, "LAR", None), "c": pw("c", 7, 0, "LAR", None)},  # LAR bye
+    }
+    published[7]["x"] = pw("x", 7, 5, "SF", "KC")
+    source = SimpleNamespace(weekly_projections=lambda season, w: published.get(w, {}))
+    status = {"a": "Out"}  # c is healthy but lost his role
+    state = SimpleNamespace(
+        league=SimpleNamespace(season=2025, scoring_settings={"rec": 1.0}),
+        player=lambda pid: SimpleNamespace(primary_position="WR", injury_status=status.get(pid)),
+    )
+    means, _, returning = week_means(source, state, [5, 6, 7, 8, 9])
+    assert means[7]["a"] == 0.0
+    assert means[8]["a"] == means[9]["a"] == 12.0 and means[8]["c"] == 0.0
+    assert returning == {"a": (8, 1)}  # the bye in week 7 is not a missed game
+
+
+def test_returning_player_sits_until_his_absence_ends(model):
+    inp = synthetic_inputs()
+    inp.means[10]["t0_0"] = 0.0  # out in the published week
+    inp.returning = {"t0_0": (11, 1)}
+    ev = Evaluator(inp, independent(model), n_sims=5_000, seed=0)
+    i = ev.pidx["t0_0"]
+    durations = ev.models.availability.durations
+    pmf = np.array(durations) / sum(durations)
+    assert not ev.avail[:, 0, i].any()
+    assert ev.avail[:, 1, i].mean() == pytest.approx(pmf[0], abs=0.02)
+    assert ev.avail[:, 1:, ev.pidx["t0_1"]].all()

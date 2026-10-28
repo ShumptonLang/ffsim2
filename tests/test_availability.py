@@ -43,6 +43,28 @@ def test_injury_durations():
     assert av[:, :, 0].tolist() == [[True] + [False] * 5] * 10
 
 
+def test_injured_player_return_given_games_missed():
+    m = AvailabilityModel()  # durations: 1 game 0.43, 2 games 0.24, 3 games 0.11, ...
+    # out in the published week 0, projected again from week 1, one game missed
+    active = np.array([[False, True], [True, True], [True, True], [True, True]])
+    av = m.sample(
+        np.random.default_rng(5), 20_000, active, np.zeros(2), np.ones(2),
+        np.array([1, -1]), np.array([1, 0]),
+    )  # fmt: skip
+    pmf = np.array(m.durations) / sum(m.durations)
+    # absence of exactly d games means back in week d
+    assert av[:, 1, 0].mean() == pytest.approx(pmf[0], abs=0.015)
+    assert av[:, 3, 0].mean() == pytest.approx(pmf[:3].sum(), abs=0.015)
+    assert not (av[:, 2, 0] & ~av[:, 3, 0]).any()  # once back, stays back with no hazard
+    assert av[:, :, 1].all()
+    # three games missed already: only absences of 3+ remain, so returns are slower
+    av3 = m.sample(
+        np.random.default_rng(6), 20_000, active, np.zeros(2), np.ones(2),
+        np.array([1, -1]), np.array([3, 0]),
+    )  # fmt: skip
+    assert av3[:, 1, 0].mean() == pytest.approx(pmf[2] / pmf[2:].sum(), abs=0.015)
+
+
 def test_bye_weeks_do_not_count_toward_absence():
     m = AvailabilityModel(durations=[1.0] + [0.0] * 10)
     active = np.array([[True], [False], [True], [True]])

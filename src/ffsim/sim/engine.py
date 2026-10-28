@@ -148,6 +148,10 @@ class Evaluator:
             for w in inp.weeks
         ]  # fmt: skip
         active = means > 0
+        wpos = {w: i for i, w in enumerate(inp.weeks)}
+        back = [inp.returning.get(p, (None, 0)) for p in self.players]
+        resume_at = np.array([wpos.get(w, -1) if w is not None else -1 for w, _ in back])
+        missed = np.array([k for _, k in back])
         pts = np.zeros((n_sims, W, P), dtype=np.float32)
         avail = np.zeros((n_sims, W, P), dtype=bool)
         rng = np.random.default_rng(seed)
@@ -160,7 +164,9 @@ class Evaluator:
             z = np.sqrt(rho) * talent + np.sqrt(1 - rho) * weekly
             sl = slice(start, start + B)
             pts[sl] = models.errors.sample(z, means[None, :, :], positions)
-            avail[sl] = models.availability.sample(rng, B, active, hazard, first_play)
+            avail[sl] = models.availability.sample(
+                rng, B, active, hazard, first_play, resume_at, missed
+            )
         return pts, avail
 
     # -- scoring -------------------------------------------------------------------
