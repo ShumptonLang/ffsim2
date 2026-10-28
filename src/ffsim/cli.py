@@ -13,7 +13,8 @@ from ffsim.data.history import HistoryStore
 from ffsim.data.projections import SleeperProjectionSource
 from ffsim.data.sleeper import SleeperClient, SleeperError
 from ffsim.league import LeagueState, Team, TeamNotFound, load_league_state
-from ffsim.model.errors import coverage, fit_error_model, load_error_model, model_path
+from ffsim.model.errors import coverage
+from ffsim.model.models import fit_models, load_models, models_path
 from ffsim.scoring import score
 from ffsim.sim.engine import simulate
 from ffsim.sim.inputs import build_inputs
@@ -117,16 +118,20 @@ def odds(
             bracket = client.winners_bracket(league_id)
         except SleeperError:
             bracket = []
-        inputs = build_inputs(state, SleeperProjectionSource(client), bracket)
-        model, fitted = load_error_model(client.cache_dir, state.league.scoring_settings, family)
+        try:
+            models, fitted = load_models(client.cache_dir, state.league.scoring_settings, family)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        inputs = build_inputs(state, SleeperProjectionSource(client), bracket, models.talent)
     if not inputs.weeks:
         console.print("[yellow]Season is complete; nothing left to simulate.[/yellow]")
         raise typer.Exit(0)
-    result = simulate(inputs, model, n_sims=sims, seed=seed)
+    result = simulate(inputs, models, n_sims=sims, seed=seed)
     report.league_summary(state, console)
     console.print(
-        f"Error model: {model.family}, "
-        + ("fitted to this league's scoring" if fitted else "default (run `ffsim fit-errors`)")
+        f"Models: {models.errors.family}, "
+        + ("fitted to this league's scoring" if fitted else "default (run `ffsim fit`)")
     )
     console.print(report.odds_table(result, state, team))
     if team:
@@ -134,13 +139,13 @@ def odds(
         if inputs.regular_weeks:
             console.print(report.focal_weeks_table(result, inputs, team))
     console.print(
-        "[dim]Milestone 2 baseline: players are simulated independently with no "
-        "rest-of-season talent uncertainty, so odds are more concentrated than reality.[/dim]"
+        "[dim]Players' weekly outcomes are not yet correlated within NFL games "
+        "(QB-WR stacks, shootouts); that arrives in milestone 4.[/dim]"
     )
 
 
-@app.command("fit-errors")
-def fit_errors(
+@app.command()
+def fit(
     league_id: LeagueOpt,
     seasons: Annotated[
         str, typer.Option("--seasons", help="Comma-separated past seasons.")
@@ -149,17 +154,20 @@ def fit_errors(
     cache_dir: CacheOpt = None,
     refresh: RefreshOpt = False,
 ) -> None:
-    """Fit the projection-error model to this league's scoring from past seasons."""
+    """Fit outcome, talent and availability models to this league's scoring."""
     client, state = _load(league_id, cache_dir, refresh)
     with client:
         years = [int(s) for s in seasons.split(",") if s.strip()]
         console.print(f"Loading {years} projections and stats (first run downloads ~1 min)…")
-        rows = list(HistoryStore(client).rows(years))
+        store = HistoryStore(client)
         settings = state.league.scoring_settings
-        model = fit_error_model(rows, settings, family, meta={"seasons": years})
-        path = model_path(client.cache_dir, settings, family)
-        model.save(path)
-    console.print(report.error_model_table(model, coverage(model, rows, settings)))
+        models, diags = fit_models(store, years, settings, family)
+        models.meta["league_id"] = league_id
+        path = models_path(client.cache_dir, settings, family)
+        models.save(path)
+        cov = coverage(models.errors, store.rows(years), settings)
+    console.print(report.error_model_table(models.errors, cov))
+    console.print(report.talent_table(models, diags))
     console.print(f"Saved to {path}")
 
 

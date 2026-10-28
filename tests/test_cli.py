@@ -47,4 +47,4 @@ def test_odds_command():
     assert res.exit_code == 0, res.output
     assert "Season outlook (2,000 simulations)" in res.output
     assert "#1" in res.output and "Out" in res.output  # seed distribution table
-    assert "default (run `ffsim fit-errors`)" in res.output
+    assert "default (run `ffsim fit`)" in res.output

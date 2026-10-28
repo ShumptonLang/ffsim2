@@ -37,7 +37,16 @@ class ProjectionSource(Protocol):
     ) -> dict[str, PlayerWeek]: ...
 
     def weekly_stats(
-        self, season: int, week: int, positions: Iterable[str] = DEFAULT_POSITIONS
+        self,
+        season: int,
+        week: int,
+        positions: Iterable[str] = DEFAULT_POSITIONS,
+        *,
+        final: bool = False,
+    ) -> dict[str, PlayerWeek]: ...
+
+    def season_projections(
+        self, season: int, positions: Iterable[str] = DEFAULT_POSITIONS
     ) -> dict[str, PlayerWeek]: ...
 
 

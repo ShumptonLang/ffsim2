@@ -1,12 +1,16 @@
 """Monte Carlo league-season engine.
 
-For each batch of simulations: draw player points for every simulated week,
-score projection-set lineups, play the remaining regular season, seed the
-playoffs, play the bracket, and accumulate per-team outcome counts.
+For each batch of simulated seasons:
 
-Milestone 2 draws players independently from the projection-error model. The
-latent-normal interface (``z``) is where the correlation copula (milestone 4)
-and the talent/availability layers (milestone 3) plug in.
+1. latent normals per player-week, with a per-player talent factor shared by
+   all remaining weeks (``rho`` from the talent model);
+2. fantasy points via the projection-error model's quantile functions;
+3. availability (this week's injury designations, new injuries later);
+4. team scores from projection-set lineups, with bench substitutions for
+   starters who are unavailable;
+5. remaining regular season, seeding, and the playoff bracket.
+
+The latent-normal ``z`` is where the correlation copula (milestone 4) plugs in.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ffsim.model.errors import ErrorModel
+from ffsim.model.models import ModelSet
 from ffsim.sim.inputs import SimInputs
 from ffsim.sim.playoffs import play_bracket, seed_teams
 
@@ -41,26 +45,70 @@ class SimResult:
         return self.team_ids.index(roster_id)
 
 
-def _lineup_matrices(inputs: SimInputs, players: list[str]) -> tuple[np.ndarray, np.ndarray]:
-    """Starter masks (W, T, P) and projected means (W, P) over ``players``."""
+@dataclass
+class _Prepared:
+    players: list[str]
+    positions: list[str | None]
+    means: np.ndarray  # (W, P)
+    rho: np.ndarray  # (P,)
+    hazard: np.ndarray  # (P,)
+    first_play: np.ndarray  # (P,)
+    plans: list[list[list[list[int]]]]  # [week][team][slot] -> candidate player indices
+
+
+def prepare(inputs: SimInputs, models: ModelSet) -> _Prepared:
+    plans_by_id = inputs.lineup_plans()
+    players = sorted(
+        {p for wk in plans_by_id.values() for plan in wk.values() for cands in plan for p in cands}
+    )
     pidx = {p: i for i, p in enumerate(players)}
-    lineups = inputs.lineups()
-    W, T, P = len(inputs.weeks), inputs.n_teams, len(players)
-    mask = np.zeros((W, T, P), dtype=np.float32)
-    means = np.zeros((W, P), dtype=np.float64)
-    for wi, w in enumerate(inputs.weeks):
-        m = inputs.means.get(w, {})
-        for p, i in pidx.items():
-            means[wi, i] = m.get(p, 0.0)
-        for ti, rid in enumerate(inputs.team_ids):
-            for p in lineups[w][rid]:
-                mask[wi, ti, pidx[p]] = 1.0
-    return mask, means
+    positions = [(inputs.positions.get(p) or (None,))[0] for p in players]
+    means = np.array(
+        [[inputs.means.get(w, {}).get(p, 0.0) for p in players] for w in inputs.weeks],
+        dtype=np.float64,
+    ).reshape(len(inputs.weeks), len(players))
+    plans = [
+        [[[pidx[p] for p in cands] for cands in plans_by_id[w][rid]] for rid in inputs.team_ids]
+        for w in inputs.weeks
+    ]
+    return _Prepared(
+        players=players,
+        positions=positions,
+        means=means,
+        rho=np.array([models.talent.rho_for(pos) for pos in positions]),
+        hazard=np.array([models.availability.hazard_for(pos) for pos in positions]),
+        first_play=np.array(
+            [models.availability.play_prob(inputs.statuses.get(p)) for p in players]
+        ),
+        plans=plans,
+    )
+
+
+def _team_scores(pts: np.ndarray, avail: np.ndarray, plans: list[list[list[int]]]) -> np.ndarray:
+    """Scores (B, T) for one week: each slot takes its first available candidate."""
+    B = pts.shape[0]
+    out = np.zeros((B, len(plans)), dtype=np.float32)
+    for t, plan in enumerate(plans):
+        used: dict[int, np.ndarray] = {}
+        total = np.zeros(B, dtype=np.float32)
+        for cands in plan:
+            filled = np.zeros(B, dtype=bool)
+            for c in cands:
+                ok = avail[:, c] & ~filled
+                if c in used:
+                    ok &= ~used[c]
+                    used[c] |= ok
+                else:
+                    used[c] = ok
+                total += np.where(ok, pts[:, c], 0.0)
+                filled |= ok
+        out[:, t] = total
+    return out
 
 
 def simulate(
     inputs: SimInputs,
-    model: ErrorModel,
+    models: ModelSet,
     n_sims: int = 10_000,
     seed: int | None = 0,
     batch_size: int = 2_000,
@@ -68,13 +116,14 @@ def simulate(
     T = inputs.n_teams
     po = inputs.playoffs
     weeks = inputs.weeks
-    lineups_players = sorted(
-        {p for ps in inputs.lineups().values() for team in ps.values() for p in team}
-    )
-    mask, means = _lineup_matrices(inputs, lineups_players)
-    positions = [(inputs.positions.get(p) or (None,))[0] for p in lineups_players]
+    W = len(weeks)
+    prep = prepare(inputs, models)
+    P = len(prep.players)
+    active = prep.means > 0
     wpos = {w: i for i, w in enumerate(weeks)}
     round_weeks = po.round_weeks()
+    sqrt_rho = np.sqrt(prep.rho).astype(np.float32)
+    sqrt_1m = np.sqrt(1 - prep.rho).astype(np.float32)
 
     n_seeds = max(po.teams, 1)
     acc = {
@@ -92,9 +141,14 @@ def simulate(
     done = 0
     while done < n_sims:
         B = min(batch_size, n_sims - done)
-        z = rng.standard_normal((B, len(weeks), len(lineups_players)), dtype=np.float32)
-        pts = model.sample(z, means[None, :, :], positions)  # (B, W, P)
-        team_pts = np.einsum("bwp,wtp->bwt", pts, mask, optimize=True)  # (B, W, T)
+        talent = rng.standard_normal((B, 1, P), dtype=np.float32)
+        weekly = rng.standard_normal((B, W, P), dtype=np.float32)
+        z = sqrt_rho * talent + sqrt_1m * weekly
+        pts = models.errors.sample(z, prep.means[None, :, :], prep.positions)  # (B, W, P)
+        avail = models.availability.sample(rng, B, active, prep.hazard, prep.first_play)
+        team_pts = np.zeros((B, W, T), dtype=np.float32)
+        for wi in range(W):
+            team_pts[:, wi] = _team_scores(pts[:, wi], avail[:, wi], prep.plans[wi])
         for w, wi in wpos.items():
             week_pts[w] += team_pts[:, wi, :].sum(0)
 
@@ -115,8 +169,7 @@ def simulate(
         acc["wins"] += (half_wins / 2).sum(0)
 
         seeds = seed_teams(half_wins, pf, inputs.divisions)  # (B, T)
-        playoff_teams = seeds[:, : po.teams]
-        np.add.at(acc["playoffs"], playoff_teams.ravel(), 1)
+        np.add.at(acc["playoffs"], seeds[:, : po.teams].ravel(), 1)
         np.add.at(acc["bye"], seeds[:, : po.byes].ravel(), 1)
         for k in range(min(po.teams, T)):
             np.add.at(acc["seed"][:, k], seeds[:, k], 1)

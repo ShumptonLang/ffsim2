@@ -122,3 +122,56 @@ class HistoryStore:
         for season in seasons:
             for week in weeks:
                 yield from self.week(season, week)
+
+    def preseason(self, season: int) -> dict[str, tuple[str, StatLine]]:
+        """Full-season preseason projections: player_id -> (position, stats)."""
+        path = self.root / f"{season}_preseason.json"
+        if not path.exists():
+            params = {"season_type": "regular", "position[]": list(DEFAULT_POSITIONS)}
+            prev = self.client.use_cache
+            self.client.use_cache = False
+            try:
+                raw = self.client.get(f"{APP_BASE}/projections/nfl/{season}", params=params) or []
+            finally:
+                self.client.use_cache = prev
+            out = {}
+            for row in raw:
+                pos = _position(row)
+                stats = _compact(_numeric_stats(row.get("stats")))
+                if pos and stats:
+                    out[str(row["player_id"])] = [pos, stats]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(out))
+        return {pid: (v[0], v[1]) for pid, v in json.loads(path.read_text()).items()}
+
+
+@dataclass
+class PlayerSeason:
+    season: int
+    player_id: str
+    position: str
+    team: str | None
+    # week -> (projected points, actual points, played)
+    weeks: dict[int, tuple[float, float, bool]]
+
+
+def player_seasons(
+    rows: Iterable[HistoryRow], settings: Mapping[str, float]
+) -> tuple[dict[tuple[int, str], PlayerSeason], dict[tuple[int, str], list[int]]]:
+    """Group history into player-seasons (scored with ``settings``).
+
+    Also returns each (season, NFL team)'s game weeks, inferred from which weeks
+    the team had any projected players (bye weeks are absent).
+    """
+    seasons: dict[tuple[int, str], PlayerSeason] = {}
+    team_weeks: dict[tuple[int, str], set[int]] = {}
+    for r in rows:
+        key = (r.season, r.player_id)
+        ps = seasons.get(key)
+        if ps is None:
+            ps = seasons[key] = PlayerSeason(r.season, r.player_id, r.position, r.team, {})
+        m, a = r.scored(settings)
+        ps.weeks[r.week] = (m, a, r.played)
+        if r.team:
+            team_weeks.setdefault((r.season, r.team), set()).add(r.week)
+    return seasons, {k: sorted(v) for k, v in team_weeks.items()}

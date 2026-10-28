@@ -5,17 +5,20 @@ decisions (start/sit, waivers, FAAB, trades) by how much each one changes their
 **championship probability**, not by projected points. See [docs/PLAN.md](docs/PLAN.md)
 for the full design.
 
-**Status:** milestones 1–2 of 6 are done.
+**Status:** milestones 1–3 of 6 are done.
 
 1. Sleeper client and cache, league-specific scoring (including superflex and IDP),
    and the league model.
 2. Skewed per-player outcome distributions fitted from 2023–2025 Sleeper projections
    vs. actual results, projection-based lineups, and a full simulation of the
    remaining regular season and playoff bracket (`ffsim odds`).
+3. Bayesian updating (preseason prior + games played, blended with Sleeper's weekly
+   projections), a per-player talent factor shared by all remaining weeks, this
+   week's injury designations, new injuries later in the season, and bench
+   substitutes for starters who are out.
 
-For now players are simulated independently, with no rest-of-season talent
-uncertainty, so title odds come out more concentrated than they should be.
-Milestones 3–4 (Bayesian updating, availability, correlation) fix that.
+Players on different NFL teams, and teammates, are still simulated independently
+within a week. Correlation (QB–WR stacks, shootouts) arrives in milestone 4.
 
 ## Install
 
@@ -30,12 +33,12 @@ pip install -e ".[dev]"
 ffsim league -l <LEAGUE_ID> -m <manager>          # format, playoff structure, standings, schedule
 ffsim roster -l <LEAGUE_ID> -m <manager> -w 9     # roster with Sleeper projections scored by your league's rules
 ffsim odds   -l <LEAGUE_ID> -m <manager>          # playoff / bye / title odds for every team
-ffsim fit-errors -l <LEAGUE_ID>                   # fit outcome distributions to your league's scoring
+ffsim fit -l <LEAGUE_ID>                          # fit all models to your league's scoring
 ```
 
-`ffsim odds` uses an error model fitted for your league's scoring once you have run
-`ffsim fit-errors`. Until then it uses the shipped default, which was fitted with
-Sleeper's default PPR scoring.
+`ffsim odds` uses models fitted for your league's scoring once you have run
+`ffsim fit`. Until then it uses the shipped defaults, which were fitted with
+Sleeper's default PPR (+IDP) scoring.
 
 `--manager` accepts a display name, team name, user ID or roster ID. API responses
 are cached in `~/.cache/ffsim` (override with `FFSIM_CACHE_DIR` or `--cache-dir`);

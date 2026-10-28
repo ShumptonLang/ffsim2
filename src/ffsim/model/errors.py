@@ -24,12 +24,10 @@ through the tables, which is what lets the copula layer reuse this model.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
-from importlib import resources
 from pathlib import Path
 
 import numpy as np
@@ -117,8 +115,9 @@ class ErrorModel:
     @classmethod
     def default(cls) -> ErrorModel:
         """Model fitted on 2023-2025 Sleeper projections vs. actuals (PPR scoring)."""
-        text = resources.files("ffsim.model").joinpath("default_error_model.json").read_text()
-        return cls.from_json(text)
+        from ffsim.model.models import ModelSet
+
+        return ModelSet.default().errors
 
     # -- sampling ----------------------------------------------------------------
 
@@ -163,6 +162,24 @@ class ErrorModel:
         """Inverse CDF for a single player-week (for reports and tests)."""
         z = special.ndtri(np.clip(np.asarray(u, dtype=np.float64), 1e-12, 1 - 1e-12))
         return self.sample(np.atleast_1d(z)[:, None], np.array([mean]), [position])[:, 0]
+
+    def to_latent(self, points: float, mean: float, position: str) -> float:
+        """Latent z whose quantile equals ``points`` (inverse of ``sample``).
+
+        Where the quantile function is flat (e.g. the dud mass), the midpoint of
+        the flat stretch is returned.
+        """
+        q = self.sample(Z_GRID[:, None], np.array([mean]), [position])[:, 0].astype(np.float64)
+        lo = int(np.searchsorted(q, points, side="left"))
+        hi = int(np.searchsorted(q, points, side="right"))
+        if hi > lo:  # exact hit on one or more grid values
+            return float((Z_GRID[lo] + Z_GRID[hi - 1]) / 2)
+        if lo == 0:
+            return float(Z_GRID[0])
+        if lo == Z_POINTS:
+            return float(Z_GRID[-1])
+        f = (points - q[lo - 1]) / (q[lo] - q[lo - 1])
+        return float(Z_GRID[lo - 1] + f * (Z_GRID[lo] - Z_GRID[lo - 1]))
 
     def mean(self, mean: float, position: str) -> float:
         """Distribution mean evaluated on the grid (equals ``mean`` by construction)."""
@@ -266,26 +283,6 @@ def fit_error_model(
         kind = "ratio" if pos in RATIO_POSITIONS else "additive"
         positions[pos] = fit_position(data[:, 0], data[:, 1], kind, family)
     return ErrorModel(family=family, positions=positions, meta=dict(meta or {}))
-
-
-def model_path(cache_dir: Path, settings: Mapping[str, float], family: str) -> Path:
-    """Cache location of a model fitted for a given scoring system."""
-    key = json.dumps(sorted((k, float(v)) for k, v in settings.items() if v))
-    digest = hashlib.sha256(f"{family}|{key}".encode()).hexdigest()[:16]
-    return cache_dir / "error_models" / f"{family}_{digest}.json"
-
-
-def load_error_model(
-    cache_dir: Path, settings: Mapping[str, float], family: str = "parametric"
-) -> tuple[ErrorModel, bool]:
-    """League-fitted model if ``ffsim fit-errors`` has been run, else the default.
-
-    Returns (model, fitted_for_league).
-    """
-    path = model_path(cache_dir, settings, family)
-    if path.exists():
-        return ErrorModel.load(path), True
-    return ErrorModel.default(), False
 
 
 def coverage(

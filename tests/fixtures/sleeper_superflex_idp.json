@@ -1314,5 +1314,69 @@
    "l": null,
    "p": 1
   }
+ ],
+ "projections/nfl/2026": [
+  {
+   "player_id": "1001",
+   "stats": {
+    "pass_yd": 4250.0,
+    "pass_td": 34.0,
+    "pass_int": 10.0,
+    "rush_yd": 300.0,
+    "rush_td": 4.0,
+    "gp": 17.0
+   }
+  },
+  {
+   "player_id": "1011",
+   "stats": {
+    "idp_tkl_solo": 68.0,
+    "idp_tkl_ast": 34.0,
+    "idp_sack": 4.25,
+    "gp": 17.0
+   }
+  }
+ ],
+ "stats/nfl/2026/1": [
+  {
+   "player_id": "1001",
+   "stats": {
+    "pass_yd": 150.0,
+    "pass_td": 1.0,
+    "gp": 1.0
+   }
+  },
+  {
+   "player_id": "1011",
+   "stats": {
+    "idp_tkl_solo": 8.0,
+    "idp_sack": 1.0,
+    "gp": 1.0
+   }
+  },
+  {
+   "player_id": "1002",
+   "stats": {
+    "gms_active": 1.0
+   }
+  }
+ ],
+ "stats/nfl/2026/2": [
+  {
+   "player_id": "1001",
+   "stats": {
+    "pass_yd": 200.0,
+    "pass_td": 1.0,
+    "gp": 1.0
+   }
+  },
+  {
+   "player_id": "1011",
+   "stats": {
+    "idp_tkl_solo": 8.0,
+    "idp_sack": 1.0,
+    "gp": 1.0
+   }
+  }
  ]
 }

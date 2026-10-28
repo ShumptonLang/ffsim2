@@ -2,13 +2,7 @@ import numpy as np
 import pytest
 
 from ffsim.data.history import HistoryRow
-from ffsim.model.errors import (
-    Z_GRID,
-    ErrorModel,
-    fit_error_model,
-    load_error_model,
-    model_path,
-)
+from ffsim.model.errors import Z_GRID, ErrorModel, fit_error_model
 
 SETTINGS = {"rec": 1.0, "fgm": 3.0}
 
@@ -92,19 +86,23 @@ def test_fit_recovers_synthetic_spread(family):
     assert k.std() == pytest.approx(4.0, rel=0.15)
 
 
-def test_json_roundtrip_and_cache_path(tmp_path):
+def test_json_roundtrip():
     m = fit_error_model(_synthetic_rows(500), SETTINGS)
     m2 = ErrorModel.from_json(m.to_json())
     z = Z_GRID[:, None]
     assert np.allclose(m.sample(z, np.array([9.0]), ["WR"]), m2.sample(z, np.array([9.0]), ["WR"]))
-    p = model_path(tmp_path, SETTINGS, "parametric")
-    assert p != model_path(tmp_path, {"rec": 0.5}, "parametric")
-    assert p != model_path(tmp_path, SETTINGS, "bootstrap")
-    _, fitted = load_error_model(tmp_path, SETTINGS)
-    assert not fitted
-    m.save(p)
-    loaded, fitted = load_error_model(tmp_path, SETTINGS)
-    assert fitted and set(loaded.positions) == {"WR", "K"}
+
+
+@pytest.mark.parametrize(("pos", "mean"), [("WR", 12.0), ("DEF", 7.0), ("QB", 20.0)])
+def test_to_latent_inverts_sample(model, pos, mean):
+    for z in (-1.5, -0.3, 0.0, 0.8, 2.0):
+        pts = float(model.sample(np.array([[z]]), np.array([mean]), [pos])[0, 0])
+        assert model.to_latent(pts, mean, pos) == pytest.approx(z, abs=0.03)
+
+
+def test_to_latent_flat_region_midpoint(model):
+    # a dud score sits in the flat dud mass; its latent value is well below 0
+    assert model.to_latent(0.0, 12.0, "RB") < -1.0
 
 
 def test_bad_family():

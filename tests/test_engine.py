@@ -8,15 +8,24 @@ from ffsim.league import (
     PlayoffSeedType,
     load_league_state,
 )
-from ffsim.model.errors import ErrorModel
-from ffsim.sim.engine import simulate
+from ffsim.model.availability import AvailabilityModel
+from ffsim.model.bayes import TalentModel
+from ffsim.model.models import ModelSet
+from ffsim.sim.engine import _team_scores, simulate
 from ffsim.sim.inputs import SimInputs, build_inputs
 from tests.conftest import LEAGUE_ID
 
 
 @pytest.fixture(scope="module")
 def model():
-    return ErrorModel.default()
+    return ModelSet.default()
+
+
+def independent(models: ModelSet) -> ModelSet:
+    """No talent persistence or injuries (milestone 2 behaviour)."""
+    return ModelSet(
+        models.errors, TalentModel(default_rho=0.0), AvailabilityModel(default_hazard=0.0)
+    )
 
 
 def synthetic_inputs(n_teams=6, weeks=(10, 11, 12), playoff_teams=4, strengths=None, base=None):
@@ -109,3 +118,59 @@ def test_fixture_league_end_to_end(client, model):
     assert res.champion.sum() == pytest.approx(1.0)
     # team 1 is 2-0; one game left; top-2 make it -> team 1 always in
     assert res.playoffs[inp.team_index(1)] == 1.0
+
+
+def test_persistence_makes_favorites_less_certain(model):
+    inp = synthetic_inputs(strengths=[13, 10, 10, 10, 10, 10])
+    flat = simulate(inp, independent(model), n_sims=8_000, seed=5)
+    sticky = ModelSet(
+        model.errors, TalentModel(default_rho=0.6), AvailabilityModel(default_hazard=0)
+    )
+    persistent = simulate(inp, sticky, n_sims=8_000, seed=5)
+    assert persistent.champion[0] < flat.champion[0] - 0.03
+
+
+def test_injuries_lower_scores(model):
+    inp = synthetic_inputs()
+    healthy = simulate(inp, independent(model), n_sims=3_000, seed=6)
+    hurt = ModelSet(
+        model.errors, TalentModel(default_rho=0.0), AvailabilityModel(default_hazard=0.3)
+    )
+    injured = simulate(inp, hurt, n_sims=3_000, seed=6)
+    last = inp.weeks[-1]
+    assert injured.week_points[last].mean() < 0.9 * healthy.week_points[last].mean()
+    assert injured.week_points[inp.weeks[0]].mean() == pytest.approx(
+        healthy.week_points[inp.weeks[0]].mean(), rel=0.02
+    )
+
+
+def test_bench_substitution_and_single_use():
+    pts = np.array([[10.0, 7.0, 5.0], [10.0, 7.0, 5.0]], dtype=np.float32)
+    avail = np.array([[True, True, True], [False, True, True]])
+    # two slots; slot 0 starter p0 (backups p1, p2); slot 1 starter p1 (backup p2)
+    plans = [[[0, 1, 2], [1, 2]]]
+    out = _team_scores(pts, avail, plans)
+    # sim 2: p0 out -> p1 moves into slot 0, so slot 1 falls back to p2
+    assert out[:, 0].tolist() == [17.0, 12.0]
+
+
+def test_questionable_starter_sometimes_sits(client, model):
+    state = load_league_state(client, LEAGUE_ID)
+    inp = build_inputs(state, SleeperProjectionSource(client), [])
+    assert inp.statuses == {"1005": "Questionable"}
+
+
+def test_bayesian_rates_and_centres(client, model):
+    state = load_league_state(client, LEAGUE_ID)
+    inp = build_inputs(state, SleeperProjectionSource(client), [], model.talent)
+    lam, k = model.talent.lam_k("QB")
+    # QB 1001: preseason 340 pts / 17 = 20 per game; weeks 1-2 scored 10 and 12
+    assert inp.rates["1001"] == pytest.approx((k * 20 + 2 * 11) / (k + 2))
+    sleeper = inp.sleeper_means[3]["1001"]
+    assert inp.means[3]["1001"] == pytest.approx((1 - lam) * sleeper + lam * inp.rates["1001"])
+    # LB 1011: prior 6/game, scored 12 twice; no week-3 projection -> stays 0
+    lam_lb, k_lb = model.talent.lam_k("LB")
+    assert inp.rates["1011"] == pytest.approx((k_lb * 6 + 2 * 12) / (k_lb + 2))
+    assert inp.means[3].get("1011", 0.0) == 0.0
+    # players with no prior and no games get no rate
+    assert "1002" not in inp.rates

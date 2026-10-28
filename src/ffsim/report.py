@@ -10,6 +10,7 @@ from rich.table import Table
 
 from ffsim.league import LeagueState, Team
 from ffsim.model.errors import ErrorModel
+from ffsim.model.models import ModelSet
 from ffsim.scoring import profile
 from ffsim.sim.engine import SimResult
 from ffsim.sim.inputs import SimInputs
@@ -193,4 +194,24 @@ def error_model_table(model: ErrorModel, cov: dict[str, dict[str, float]]) -> Ta
                 _pct(c["q50"]) if first and c else "",
                 _pct(c["q90"]) if first and c else "",
             )
+    return t
+
+
+def talent_table(models: ModelSet, diags: Mapping[str, Mapping[str, Mapping[str, float]]]) -> Table:
+    t = Table(title="Talent updating, persistence and availability")
+    for col in ("Pos", "Blend λ", "Prior k", "Next-wk MSE", "Persistence ρ", "Miss next game"):
+        t.add_column(col, justify="left" if col == "Pos" else "right")
+    talent, avail = diags.get("talent", {}), diags.get("availability", {})
+    for pos in sorted(set(talent) | set(avail)):
+        lam, k = models.talent.lam_k(pos)
+        d = talent.get(pos, {})
+        mse = f"{d['mse_sleeper']:.1f} → {d['mse_blend']:.1f}" if "mse_sleeper" in d else ""
+        t.add_row(
+            pos,
+            f"{lam:.2f}",
+            f"{k:g}",
+            mse,
+            f"{models.talent.rho_for(pos):.2f}",
+            _pct(models.availability.hazard_for(pos)),
+        )
     return t
