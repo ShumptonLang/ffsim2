@@ -9,10 +9,14 @@ import typer
 from rich.console import Console
 
 from ffsim import report
+from ffsim.data.history import HistoryStore
 from ffsim.data.projections import SleeperProjectionSource
 from ffsim.data.sleeper import SleeperClient, SleeperError
 from ffsim.league import LeagueState, Team, TeamNotFound, load_league_state
+from ffsim.model.errors import coverage, fit_error_model, load_error_model, model_path
 from ffsim.scoring import score
+from ffsim.sim.engine import simulate
+from ffsim.sim.inputs import build_inputs
 
 app = typer.Typer(no_args_is_help=True, help="Monte Carlo championship odds for Sleeper leagues.")
 console = Console()
@@ -93,6 +97,70 @@ def roster(
             if pid in team.players
         }
         console.print(report.roster_table(state, team, wk, points))
+
+
+@app.command()
+def odds(
+    league_id: LeagueOpt,
+    manager: ManagerOpt = None,
+    sims: Annotated[int, typer.Option("--sims", "-n", help="Number of simulations.")] = 10_000,
+    seed: Annotated[int, typer.Option("--seed", help="Random seed.")] = 0,
+    family: Annotated[str, typer.Option("--family", help="Error model family.")] = "parametric",
+    cache_dir: CacheOpt = None,
+    refresh: RefreshOpt = False,
+) -> None:
+    """Playoff, bye and championship odds for every team."""
+    client, state = _load(league_id, cache_dir, refresh)
+    with client:
+        team = _team(state, manager)
+        try:
+            bracket = client.winners_bracket(league_id)
+        except SleeperError:
+            bracket = []
+        inputs = build_inputs(state, SleeperProjectionSource(client), bracket)
+        model, fitted = load_error_model(client.cache_dir, state.league.scoring_settings, family)
+    if not inputs.weeks:
+        console.print("[yellow]Season is complete; nothing left to simulate.[/yellow]")
+        raise typer.Exit(0)
+    result = simulate(inputs, model, n_sims=sims, seed=seed)
+    report.league_summary(state, console)
+    console.print(
+        f"Error model: {model.family}, "
+        + ("fitted to this league's scoring" if fitted else "default (run `ffsim fit-errors`)")
+    )
+    console.print(report.odds_table(result, state, team))
+    if team:
+        console.print(report.seed_table(result, state, team))
+        if inputs.regular_weeks:
+            console.print(report.focal_weeks_table(result, inputs, team))
+    console.print(
+        "[dim]Milestone 2 baseline: players are simulated independently with no "
+        "rest-of-season talent uncertainty, so odds are more concentrated than reality.[/dim]"
+    )
+
+
+@app.command("fit-errors")
+def fit_errors(
+    league_id: LeagueOpt,
+    seasons: Annotated[
+        str, typer.Option("--seasons", help="Comma-separated past seasons.")
+    ] = "2023,2024,2025",
+    family: Annotated[str, typer.Option("--family", help="parametric | bootstrap")] = "parametric",
+    cache_dir: CacheOpt = None,
+    refresh: RefreshOpt = False,
+) -> None:
+    """Fit the projection-error model to this league's scoring from past seasons."""
+    client, state = _load(league_id, cache_dir, refresh)
+    with client:
+        years = [int(s) for s in seasons.split(",") if s.strip()]
+        console.print(f"Loading {years} projections and stats (first run downloads ~1 min)…")
+        rows = list(HistoryStore(client).rows(years))
+        settings = state.league.scoring_settings
+        model = fit_error_model(rows, settings, family, meta={"seasons": years})
+        path = model_path(client.cache_dir, settings, family)
+        model.save(path)
+    console.print(report.error_model_table(model, coverage(model, rows, settings)))
+    console.print(f"Saved to {path}")
 
 
 if __name__ == "__main__":

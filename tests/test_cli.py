@@ -40,3 +40,11 @@ def test_roster_command_scores_projections():
 def test_unknown_manager_exits_nonzero():
     res = runner.invoke(cli.app, ["league", "-l", LEAGUE_ID, "-m", "zzz"])
     assert res.exit_code == 1 and "no team matches" in res.output
+
+
+def test_odds_command():
+    res = runner.invoke(cli.app, ["odds", "-l", LEAGUE_ID, "-m", "manager1", "-n", "2000"])
+    assert res.exit_code == 0, res.output
+    assert "Season outlook (2,000 simulations)" in res.output
+    assert "#1" in res.output and "Out" in res.output  # seed distribution table
+    assert "default (run `ffsim fit-errors`)" in res.output

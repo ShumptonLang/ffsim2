@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import numpy as np
 from rich.console import Console
 from rich.table import Table
 
 from ffsim.league import LeagueState, Team
+from ffsim.model.errors import ErrorModel
 from ffsim.scoring import profile
+from ffsim.sim.engine import SimResult
+from ffsim.sim.inputs import SimInputs
 
 
 def league_summary(state: LeagueState, console: Console) -> None:
@@ -107,4 +111,86 @@ def roster_table(
             slot,
             proj,
         )
+    return t
+
+
+def odds_table(result: SimResult, state: LeagueState, focal: Team | None = None) -> Table:
+    t = Table(title=f"Season outlook ({result.n_sims:,} simulations)")
+    for col in ("Team", "Record", "Proj W", "Playoffs", "Bye", "Final", "Champion", "±"):
+        t.add_column(col, justify="left" if col in {"Team", "Record"} else "right")
+    for i in np.argsort(-result.champion, kind="stable"):
+        team = state.teams[result.team_ids[i]]
+        r = team.record
+        style = "bold cyan" if focal and team.roster_id == focal.roster_id else None
+        t.add_row(
+            team.label,
+            f"{r.wins}-{r.losses}-{r.ties}",
+            f"{result.mean_wins[i]:.1f}",
+            _pct(result.playoffs[i]),
+            _pct(result.bye[i]),
+            _pct(result.final[i]),
+            _pct(result.champion[i]),
+            f"{100 * result.se(result.champion)[i]:.1f}",
+            style=style,
+        )
+    return t
+
+
+def focal_weeks_table(result: SimResult, inputs: SimInputs, focal: Team) -> Table:
+    ti = inputs.team_index(focal.roster_id)
+    t = Table(title=f"{focal.label}: remaining regular season")
+    for col in ("Week", "Opponent", "Proj pts", "Opp proj", "P(win)"):
+        t.add_column(col, justify="left" if col in {"Week", "Opponent"} else "right")
+    for w in inputs.regular_weeks:
+        opp = next(
+            (b if a == ti else a for a, b in inputs.matchups.get(w, []) if ti in (a, b)), None
+        )
+        t.add_row(
+            str(w),
+            inputs.team_labels[opp] if opp is not None else "—",
+            f"{result.week_points[w][ti]:.1f}",
+            f"{result.week_points[w][opp]:.1f}" if opp is not None else "",
+            _pct(result.week_win[w][ti]),
+        )
+    return t
+
+
+def seed_table(result: SimResult, state: LeagueState, focal: Team) -> Table:
+    i = result.index(focal.roster_id)
+    probs = result.seed_probs[i]
+    t = Table(title=f"{focal.label}: playoff seed distribution")
+    for k in range(len(probs)):
+        t.add_column(f"#{k + 1}", justify="right")
+    t.add_column("Out", justify="right")
+    t.add_row(*[_pct(p) for p in probs], _pct(1 - probs.sum()))
+    return t
+
+
+def _pct(p: float) -> str:
+    if p <= 0:
+        return "0%"
+    if p < 0.001:
+        return "<0.1%"
+    return f"{100 * p:.1f}%"
+
+
+def error_model_table(model: ErrorModel, cov: dict[str, dict[str, float]]) -> Table:
+    t = Table(title=f"Projection-error model ({model.family})")
+    for col in ("Pos", "Bucket", "n", "Center", "Bias", "Below p10", "p50", "p90"):
+        t.add_column(col, justify="left" if col in {"Pos", "Bucket"} else "right")
+    for pos, pm in model.positions.items():
+        c = cov.get(pos, {})
+        for b, d in enumerate(pm.diagnostics):
+            bias = d.get("mean_ratio", d.get("mean_resid", 0.0))
+            first = b == 0
+            t.add_row(
+                pos if first else "",
+                f"{d['lo']:.1f}–{d['hi']:.1f}",
+                f"{int(d['n'])}",
+                f"{d['center']:.1f}",
+                f"{bias:.2f}" + ("x" if pm.kind == "ratio" else ""),
+                _pct(c["q10"]) if first and c else "",
+                _pct(c["q50"]) if first and c else "",
+                _pct(c["q90"]) if first and c else "",
+            )
     return t

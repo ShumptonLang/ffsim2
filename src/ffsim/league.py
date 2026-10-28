@@ -361,6 +361,8 @@ class LeagueState:
     players: dict[str, Player]
     nfl_week: int
     nfl_season_type: str = "regular"
+    # week -> roster_id -> points, for scored playoff weeks (regular weeks are in schedule)
+    playoff_points: dict[int, dict[int, float]] = field(default_factory=dict)
 
     def player(self, player_id: str) -> Player:
         return self.players.get(player_id) or Player.unknown(player_id)
@@ -419,6 +421,11 @@ def load_league_state(client: SleeperClient, league_id: str) -> LeagueState:
             week, client.matchups(league_id, week, final=scored), scored
         )
 
+    playoff_points: dict[int, dict[int, float]] = {}
+    for week in range(league.playoffs.start_week, league.last_scored_week + 1):
+        rows = client.matchups(league_id, week, final=True)
+        playoff_points[week] = {int(r["roster_id"]): float(r.get("points") or 0.0) for r in rows}
+
     wanted = {p for t in teams.values() for p in t.players}
     players = {pid: Player.from_sleeper(pid, raw) for pid, raw in raw_players.items()}
     for pid in wanted - players.keys():
@@ -431,4 +438,5 @@ def load_league_state(client: SleeperClient, league_id: str) -> LeagueState:
         players=players,
         nfl_week=int(state.get("week") or state.get("display_week") or 0),
         nfl_season_type=state.get("season_type") or "regular",
+        playoff_points=playoff_points,
     )

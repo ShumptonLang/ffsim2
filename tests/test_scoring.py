@@ -83,3 +83,17 @@ def test_profile_label():
     p = profile({**PPR, "bonus_rec_te": 0.5, "idp_sack": 4})
     assert p.label == "PPR, TE+0.5, IDP"
     assert profile({"rec": 0.5, "pass_td": 6}).label == "Half-PPR, 6pt pass TD"
+
+
+KICK = {"fgm_40_49": 4, "fgm_50_59": 5, "fgm_60p": 6, "fgmiss": -1, "xpm": 1}
+
+
+def test_kicker_projection_buckets_mapped_to_league_keys():
+    proj = {"fgm_40_49": 0.5, "fgm_50p": 0.3, "fgmiss_40_49": 0.1, "fgmiss_50p": 0.2, "xpm": 2}
+    assert score(proj, KICK) == pytest.approx(2 + 1.5 - 0.3 + 2)
+
+
+def test_kicker_actual_line_not_double_counted():
+    act = {"fgm_50_59": 1, "fgm_50p": 1, "fgmiss": 1, "fgmiss_50_59": 1, "fgmiss_50p": 1}
+    assert score(act, KICK) == pytest.approx(5 - 1)
+    assert score({"fgm_50_59": 1, "fgm_60p": 1}, {"fgm_50p": 5}) == pytest.approx(10)

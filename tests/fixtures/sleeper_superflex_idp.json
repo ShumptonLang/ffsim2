@@ -1301,5 +1301,18 @@
    },
    "extra": true
   }
+ ],
+ "projections/nfl/2026/4": [],
+ "projections/nfl/2026/5": [],
+ "v1/league/900000000000000001/winners_bracket": [
+  {
+   "r": 1,
+   "m": 1,
+   "t1": 1,
+   "t2": 3,
+   "w": null,
+   "l": null,
+   "p": 1
+  }
  ]
 }
