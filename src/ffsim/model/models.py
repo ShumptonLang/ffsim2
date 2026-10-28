@@ -12,6 +12,7 @@ from pathlib import Path
 from ffsim.data.history import HistoryStore, player_seasons
 from ffsim.model.availability import AvailabilityModel, fit_availability
 from ffsim.model.bayes import TalentModel, fit_talent, prior_rate
+from ffsim.model.correlation import CorrelationModel, fit_correlation
 from ffsim.model.errors import ErrorModel, fit_error_model
 
 DEFAULT_FILE = "default_models.json"
@@ -22,6 +23,7 @@ class ModelSet:
     errors: ErrorModel
     talent: TalentModel = field(default_factory=TalentModel)
     availability: AvailabilityModel = field(default_factory=AvailabilityModel)
+    correlation: CorrelationModel = field(default_factory=CorrelationModel)
     meta: dict[str, object] = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -31,6 +33,7 @@ class ModelSet:
                 "errors": json.loads(self.errors.to_json()),
                 "talent": self.talent.to_dict(),
                 "availability": self.availability.to_dict(),
+                "correlation": self.correlation.to_dict(),
             }
         )
 
@@ -41,6 +44,7 @@ class ModelSet:
             errors=ErrorModel.from_json(json.dumps(d["errors"])),
             talent=TalentModel.from_dict(d.get("talent", {})),
             availability=AvailabilityModel.from_dict(d.get("availability", {})),
+            correlation=CorrelationModel.from_dict(d.get("correlation", {})),
             meta=d.get("meta", {}),
         )
 
@@ -82,7 +86,7 @@ def fit_models(
     seasons: Iterable[int],
     settings: Mapping[str, float],
     family: str = "parametric",
-) -> tuple[ModelSet, dict[str, dict[str, dict[str, float]]]]:
+) -> tuple[ModelSet, dict[str, object]]:
     seasons = list(seasons)
     rows = list(store.rows(seasons))
     errors = fit_error_model(rows, settings, family)
@@ -95,8 +99,10 @@ def fit_models(
                 priors[(season, pid)] = rate
     talent, talent_diag = fit_talent(by_player, priors, errors)
     availability, avail_diag = fit_availability(by_player, team_weeks)
+    correlation, corr_diag = fit_correlation(rows, settings, errors, talent.rho)
     meta: dict[str, object] = {"seasons": seasons, "family": family}
-    return ModelSet(errors, talent, availability, meta), {
+    return ModelSet(errors, talent, availability, correlation, meta), {
         "talent": talent_diag,
         "availability": avail_diag,
+        "correlation": corr_diag,
     }

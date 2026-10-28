@@ -5,7 +5,7 @@ decisions (start/sit, waivers, FAAB, trades) by how much each one changes their
 **championship probability**, not by projected points. See [docs/PLAN.md](docs/PLAN.md)
 for the full design.
 
-**Status:** milestones 1–3 of 6 are done.
+**Status:** milestones 1–4 of 6 are done.
 
 1. Sleeper client and cache, league-specific scoring (including superflex and IDP),
    and the league model.
@@ -16,9 +16,12 @@ for the full design.
    projections), a per-player talent factor shared by all remaining weeks, this
    week's injury designations, new injuries later in the season, and bench
    substitutes for starters who are out.
+4. Within-game correlation through a factor-model copula. Factors cover each
+   game's environment, each team's offense and pass/run split, and teammates'
+   usage shares; loadings by role are fitted to 2023–2025 residual correlations
+   (QB–WR1 +0.27, RB1–RB2 −0.07, DEF vs. opposing QB −0.40).
 
-Players on different NFL teams, and teammates, are still simulated independently
-within a week. Correlation (QB–WR stacks, shootouts) arrives in milestone 4.
+Next: decisions ranked by change in championship probability (milestone 5).
 
 ## Install
 

@@ -2,15 +2,14 @@
 
 For each batch of simulated seasons:
 
-1. latent normals per player-week, with a per-player talent factor shared by
-   all remaining weeks (``rho`` from the talent model);
+1. latent normals per player-week: a per-player talent factor shared by all
+   remaining weeks (``rho`` from the talent model) plus a weekly part that is
+   correlated within NFL games through the factor copula;
 2. fantasy points via the projection-error model's quantile functions;
 3. availability (this week's injury designations, new injuries later);
 4. team scores from projection-set lineups, with bench substitutions for
    starters who are unavailable;
 5. remaining regular season, seeding, and the playoff bracket.
-
-The latent-normal ``z`` is where the correlation copula (milestone 4) plugs in.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ffsim.model.correlation import WeekLayout, sample_weekly, week_layout
 from ffsim.model.models import ModelSet
 from ffsim.sim.inputs import SimInputs
 from ffsim.sim.playoffs import play_bracket, seed_teams
@@ -54,6 +54,7 @@ class _Prepared:
     hazard: np.ndarray  # (P,)
     first_play: np.ndarray  # (P,)
     plans: list[list[list[list[int]]]]  # [week][team][slot] -> candidate player indices
+    layouts: list[WeekLayout]  # correlation factor layout per week
 
 
 def prepare(inputs: SimInputs, models: ModelSet) -> _Prepared:
@@ -81,6 +82,12 @@ def prepare(inputs: SimInputs, models: ModelSet) -> _Prepared:
             [models.availability.play_prob(inputs.statuses.get(p)) for p in players]
         ),
         plans=plans,
+        layouts=[
+            week_layout(
+                models.correlation, players, inputs.nfl_games.get(w, {}), inputs.roles.get(w, {})
+            )
+            for w in inputs.weeks
+        ],
     )
 
 
@@ -142,8 +149,8 @@ def simulate(
     while done < n_sims:
         B = min(batch_size, n_sims - done)
         talent = rng.standard_normal((B, 1, P), dtype=np.float32)
-        weekly = rng.standard_normal((B, W, P), dtype=np.float32)
-        z = sqrt_rho * talent + sqrt_1m * weekly
+        weekly = np.stack([sample_weekly(rng, B, lay) for lay in prep.layouts], axis=1)
+        z = sqrt_rho * talent + sqrt_1m * weekly.reshape(B, W, P)
         pts = models.errors.sample(z, prep.means[None, :, :], prep.positions)  # (B, W, P)
         avail = models.availability.sample(rng, B, active, prep.hazard, prep.first_play)
         team_pts = np.zeros((B, W, T), dtype=np.float32)

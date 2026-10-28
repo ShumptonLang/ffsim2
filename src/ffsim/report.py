@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 from rich.console import Console
@@ -197,7 +198,7 @@ def error_model_table(model: ErrorModel, cov: dict[str, dict[str, float]]) -> Ta
     return t
 
 
-def talent_table(models: ModelSet, diags: Mapping[str, Mapping[str, Mapping[str, float]]]) -> Table:
+def talent_table(models: ModelSet, diags: Mapping[str, Any]) -> Table:
     t = Table(title="Talent updating, persistence and availability")
     for col in ("Pos", "Blend λ", "Prior k", "Next-wk MSE", "Persistence ρ", "Miss next game"):
         t.add_column(col, justify="left" if col == "Pos" else "right")
@@ -213,5 +214,35 @@ def talent_table(models: ModelSet, diags: Mapping[str, Mapping[str, Mapping[str,
             mse,
             f"{models.talent.rho_for(pos):.2f}",
             _pct(models.availability.hazard_for(pos)),
+        )
+    return t
+
+
+KEY_PAIRS = [
+    ("QB", "WR1", True), ("QB", "WR2", True), ("QB", "TE1", True), ("QB", "RB1", True),
+    ("RB1", "RB2", True), ("WR1", "WR2", True), ("DEF", "RB1", True), ("K", "QB", True),
+    ("QB", "QB", False), ("WR1", "WR1", False), ("QB", "WR1", False), ("DEF", "QB", False),
+    ("DEF", "RB1", False), ("DEF", "DEF", False), ("LB1", "RB1", False), ("DB1", "WR1", False),
+]  # fmt: skip
+
+
+def correlation_table(diags: list[dict[str, Any]]) -> Table:
+    t = Table(title="Within-game correlation (latent residuals)")
+    for col in ("Pair", "Side", "Observed", "Model", "n"):
+        t.add_column(col, justify="left" if col in {"Pair", "Side"} else "right")
+    by_key = {(d["a"], d["b"], d["same_team"]): d for d in diags}
+    for a, b, same in KEY_PAIRS:
+        lo, hi = sorted((a, b))
+        d = by_key.get((lo, hi, same))
+        if d is None:
+            continue
+        # "Model" shows the weekly correlation the sim produces including talent attenuation.
+        attenuated = d["implied"] * d["observed"] / d["target"] if d["target"] else d["implied"]
+        t.add_row(
+            f"{a}–{b}",
+            "same team" if same else "opponents",
+            f"{d['observed']:+.2f}",
+            f"{attenuated:+.2f}",
+            f"{d['n']:,}",
         )
     return t

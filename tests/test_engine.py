@@ -10,8 +10,9 @@ from ffsim.league import (
 )
 from ffsim.model.availability import AvailabilityModel
 from ffsim.model.bayes import TalentModel
+from ffsim.model.correlation import CorrelationModel
 from ffsim.model.models import ModelSet
-from ffsim.sim.engine import _team_scores, simulate
+from ffsim.sim.engine import _team_scores, prepare, simulate
 from ffsim.sim.inputs import SimInputs, build_inputs
 from tests.conftest import LEAGUE_ID
 
@@ -24,7 +25,10 @@ def model():
 def independent(models: ModelSet) -> ModelSet:
     """No talent persistence or injuries (milestone 2 behaviour)."""
     return ModelSet(
-        models.errors, TalentModel(default_rho=0.0), AvailabilityModel(default_hazard=0.0)
+        models.errors,
+        TalentModel(default_rho=0.0),
+        AvailabilityModel(default_hazard=0.0),
+        CorrelationModel(),
     )
 
 
@@ -174,3 +178,51 @@ def test_bayesian_rates_and_centres(client, model):
     assert inp.means[3].get("1011", 0.0) == 0.0
     # players with no prior and no games get no rate
     assert "1002" not in inp.rates
+
+
+def _stack_inputs():
+    """Team 1 stacks QB+WR1+WR2 from BUF; team 2 has the same roles spread over 3 NFL teams."""
+    inp = synthetic_inputs(n_teams=2, playoff_teams=2)
+    inp.slots = ["QB", "WR", "WR"]
+    inp.rosters = {1: ["q1", "w1", "w2"], 2: ["q2", "w3", "w4"]}
+    inp.positions = {"q1": ("QB",), "q2": ("QB",), "w1": ("WR",), "w2": ("WR",),
+                     "w3": ("WR",), "w4": ("WR",)}  # fmt: skip
+    for w in inp.weeks:
+        inp.means[w] = {"q1": 20, "q2": 20, "w1": 14, "w2": 12, "w3": 14, "w4": 12}
+        inp.nfl_games[w] = {
+            "q1": ("BUF", "MIA"), "w1": ("BUF", "MIA"), "w2": ("BUF", "MIA"),
+            "q2": ("KC", "LV"), "w3": ("DET", "GB"), "w4": ("SF", "LA"),
+        }  # fmt: skip
+        inp.roles[w] = {"q1": "QB", "w1": "WR1", "w2": "WR2", "q2": "QB", "w3": "WR1", "w4": "WR2"}
+    return inp
+
+
+def test_stacked_team_has_wider_score_distribution(model):
+    inp = _stack_inputs()
+    prep = prepare(inp, model)
+    from ffsim.model.correlation import sample_weekly
+
+    rng = np.random.default_rng(0)
+    z = sample_weekly(rng, 50_000, prep.layouts[0])
+    pts = model.errors.sample(z, prep.means[0][None, :], prep.positions)
+    avail = np.ones_like(pts, dtype=bool)
+    scores = _team_scores(pts, avail, prep.plans[0])
+    assert scores[:, 0].mean() == pytest.approx(scores[:, 1].mean(), rel=0.02)
+    assert scores[:, 0].std() > 1.08 * scores[:, 1].std()
+    # without correlation the two teams are statistically identical
+    ind = prepare(inp, independent(model))
+    z = sample_weekly(rng, 50_000, ind.layouts[0])
+    pts = model.errors.sample(z, ind.means[0][None, :], ind.positions)
+    s2 = _team_scores(pts, avail, ind.plans[0])
+    assert s2[:, 0].std() == pytest.approx(s2[:, 1].std(), rel=0.03)
+
+
+def test_fixture_roles_and_games(client, model):
+    state = load_league_state(client, LEAGUE_ID)
+    inp = build_inputs(state, SleeperProjectionSource(client), [], model.talent)
+    assert inp.nfl_games[3]["1001"] == ("BUF", "KC")
+    assert inp.roles[3]["1001"] == "QB"
+    assert inp.roles[3]["BUF"] == "DEF"
+    assert inp.nfl_games[4] == {}  # unpublished week: no game info -> independent
+    res = simulate(inp, model, n_sims=1_000, seed=0)
+    assert res.champion.sum() == pytest.approx(1.0)

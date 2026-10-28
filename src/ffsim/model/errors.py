@@ -138,6 +138,7 @@ class ErrorModel:
         positions = list(positions)
         means = np.asarray(means, dtype=np.float64)
         out = np.zeros(np.broadcast_shapes(z.shape, means.shape), dtype=np.float32)
+        z = np.broadcast_to(z, out.shape)
         zf = np.clip((z - Z_MIN) / _DZ, 0.0, Z_POINTS - 1)
         k = np.minimum(zf.astype(np.intp), Z_POINTS - 2)
         frac = zf - k
@@ -164,22 +165,37 @@ class ErrorModel:
         return self.sample(np.atleast_1d(z)[:, None], np.array([mean]), [position])[:, 0]
 
     def to_latent(self, points: float, mean: float, position: str) -> float:
-        """Latent z whose quantile equals ``points`` (inverse of ``sample``).
+        """Latent z whose quantile equals ``points`` (inverse of ``sample``)."""
+        return float(self.to_latent_many(np.array([points]), np.array([mean]), [position])[0])
+
+    def to_latent_many(
+        self, points: np.ndarray, means: np.ndarray, positions: list[str | None]
+    ) -> np.ndarray:
+        """Vectorized inverse of ``sample`` for many player-weeks.
 
         Where the quantile function is flat (e.g. the dud mass), the midpoint of
         the flat stretch is returned.
         """
-        q = self.sample(Z_GRID[:, None], np.array([mean]), [position])[:, 0].astype(np.float64)
-        lo = int(np.searchsorted(q, points, side="left"))
-        hi = int(np.searchsorted(q, points, side="right"))
-        if hi > lo:  # exact hit on one or more grid values
-            return float((Z_GRID[lo] + Z_GRID[hi - 1]) / 2)
-        if lo == 0:
-            return float(Z_GRID[0])
-        if lo == Z_POINTS:
-            return float(Z_GRID[-1])
-        f = (points - q[lo - 1]) / (q[lo] - q[lo - 1])
-        return float(Z_GRID[lo - 1] + f * (Z_GRID[lo] - Z_GRID[lo - 1]))
+        points = np.asarray(points, dtype=np.float64)
+        out = np.empty(len(points))
+        chunk = 4096
+        for start in range(0, len(points), chunk):
+            sl = slice(start, start + chunk)
+            q = self.sample(Z_GRID[:, None], means[None, sl], positions[sl]).astype(np.float64)
+            for k, (col, x) in enumerate(zip(q.T, points[sl], strict=True)):
+                lo = int(np.searchsorted(col, x, side="left"))
+                hi = int(np.searchsorted(col, x, side="right"))
+                if hi > lo:  # exact hit on one or more grid values
+                    z = (Z_GRID[lo] + Z_GRID[hi - 1]) / 2
+                elif lo == 0:
+                    z = Z_GRID[0]
+                elif lo == Z_POINTS:
+                    z = Z_GRID[-1]
+                else:
+                    f = (x - col[lo - 1]) / (col[lo] - col[lo - 1])
+                    z = Z_GRID[lo - 1] + f * (Z_GRID[lo] - Z_GRID[lo - 1])
+                out[start + k] = z
+        return out
 
     def mean(self, mean: float, position: str) -> float:
         """Distribution mean evaluated on the grid (equals ``mean`` by construction)."""

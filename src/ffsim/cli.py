@@ -138,10 +138,6 @@ def odds(
         console.print(report.seed_table(result, state, team))
         if inputs.regular_weeks:
             console.print(report.focal_weeks_table(result, inputs, team))
-    console.print(
-        "[dim]Players' weekly outcomes are not yet correlated within NFL games "
-        "(QB-WR stacks, shootouts); that arrives in milestone 4.[/dim]"
-    )
 
 
 @app.command()
@@ -168,6 +164,7 @@ def fit(
         cov = coverage(models.errors, store.rows(years), settings)
     console.print(report.error_model_table(models.errors, cov))
     console.print(report.talent_table(models, diags))
+    console.print(report.correlation_table(diags["correlation"]))  # type: ignore[arg-type]
     console.print(f"Saved to {path}")
 
 

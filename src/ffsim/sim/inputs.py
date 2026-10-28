@@ -14,6 +14,7 @@ import numpy as np
 from ffsim.data.projections import ProjectionSource
 from ffsim.league import SLOT_ELIGIBILITY, LeagueState, PlayoffFormat
 from ffsim.model.bayes import TalentModel, prior_rate
+from ffsim.model.correlation import assign_roles
 from ffsim.scoring import score
 from ffsim.sim.lineups import best_lineup
 
@@ -40,6 +41,9 @@ class SimInputs:
     statuses: dict[str, str] = field(default_factory=dict)
     sleeper_means: dict[int, dict[str, float]] = field(default_factory=dict)  # before blending
     rates: dict[str, float] = field(default_factory=dict)  # Bayesian per-game rate
+    # week -> player_id -> (NFL team, opponent) / correlation role
+    nfl_games: dict[int, dict[str, tuple[str, str]]] = field(default_factory=dict)
+    roles: dict[int, dict[str, str]] = field(default_factory=dict)
 
     @property
     def n_teams(self) -> int:
@@ -95,28 +99,32 @@ def week_means(
     source: ProjectionSource,
     state: LeagueState,
     weeks: list[int],
-) -> dict[int, dict[str, float]]:
+) -> tuple[dict[int, dict[str, float]], dict[int, dict[str, tuple[str, str]]]]:
     """Projected points per player for each week, scored with league settings.
 
-    A week with no projections at all (not published yet) reuses the most recent
-    week that has them; a player missing from a published week is on bye/out.
+    Also returns each projected player's (NFL team, opponent) per week. A week
+    with no projections at all (not published yet) reuses the most recent
+    week's points but has no game info; a player missing from a published week
+    is on bye or out.
     """
     settings = state.league.scoring_settings
     out: dict[int, dict[str, float]] = {}
+    games: dict[int, dict[str, tuple[str, str]]] = {}
     last: dict[str, float] = {}
     for w in weeks:
         proj = source.weekly_projections(state.league.season, w)
+        games[w] = {}
         if not proj:
             out[w] = dict(last)
             continue
-        m = {
-            pid: max(0.0, score(pw.stats, settings, state.player(pid).primary_position))
-            if pw.stats.get("gp", 1) > 0
-            else 0.0
-            for pid, pw in proj.items()
-        }
+        m = {}
+        for pid, pw in proj.items():
+            pos = state.player(pid).primary_position
+            m[pid] = max(0.0, score(pw.stats, settings, pos)) if pw.stats.get("gp", 1) > 0 else 0.0
+            if pw.team and pw.opponent:
+                games[w][pid] = (pw.team, pw.opponent)
         out[w] = last = m
-    return out
+    return out, games
 
 
 def player_rates(
@@ -179,7 +187,14 @@ def build_inputs(
 
     rosters = {t.roster_id: list(t.active_players) for t in teams}
     rostered = {p for ps in rosters.values() for p in ps}
-    sleeper = week_means(source, state, weeks) if weeks else {}
+    sleeper, games = week_means(source, state, weeks) if weeks else ({}, {})
+    roles = {
+        w: assign_roles(
+            (p, t[0], state.player(p).primary_position, sleeper[w].get(p, 0.0))
+            for p, t in wg.items()
+        )
+        for w, wg in games.items()
+    }
     rates: dict[str, float] = {}
     means = sleeper
     if talent is not None and weeks:
@@ -219,5 +234,7 @@ def build_inputs(
         },
         statuses=statuses,
         sleeper_means=sleeper,
+        nfl_games={w: {p: g for p, g in wg.items() if p in rostered} for w, wg in games.items()},
+        roles={w: {p: r for p, r in wr.items() if p in rostered} for w, wr in roles.items()},
         rates=rates,
     )
