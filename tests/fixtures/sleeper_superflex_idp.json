@@ -1,0 +1,1382 @@
+{
+ "v1/state/nfl": {
+  "week": 3,
+  "display_week": 3,
+  "season": "2026",
+  "season_type": "regular",
+  "leg": 3
+ },
+ "v1/league/900000000000000001": {
+  "league_id": "900000000000000001",
+  "name": "Fixture Superflex IDP League",
+  "season": "2026",
+  "status": "in_season",
+  "total_rosters": 4,
+  "previous_league_id": "800000000000000001",
+  "roster_positions": [
+   "QB",
+   "RB",
+   "RB",
+   "WR",
+   "WR",
+   "TE",
+   "FLEX",
+   "SUPER_FLEX",
+   "K",
+   "DEF",
+   "DL",
+   "LB",
+   "DB",
+   "IDP_FLEX",
+   "BN",
+   "BN",
+   "BN",
+   "IR"
+  ],
+  "scoring_settings": {
+   "pass_yd": 0.04,
+   "pass_td": 4,
+   "pass_int": -2,
+   "rush_yd": 0.1,
+   "rush_td": 6,
+   "rec": 1,
+   "rec_yd": 0.1,
+   "rec_td": 6,
+   "fum_lost": -2,
+   "bonus_rec_te": 0.5,
+   "bonus_rush_yd_100": 3,
+   "bonus_pass_yd_300": 2,
+   "fgm_30_39": 3,
+   "xpm": 1,
+   "fgmiss": -1,
+   "def_td": 6,
+   "sack": 1,
+   "int": 2,
+   "pts_allow_0": 10,
+   "pts_allow_1_6": 7,
+   "pts_allow_7_13": 4,
+   "pts_allow_14_20": 1,
+   "pts_allow_21_27": 0,
+   "pts_allow_28_34": -1,
+   "pts_allow_35p": -4,
+   "idp_tkl_solo": 1,
+   "idp_tkl_ast": 0.5,
+   "idp_sack": 4,
+   "idp_int": 3,
+   "idp_pass_def": 1.5
+  },
+  "settings": {
+   "playoff_week_start": 4,
+   "playoff_teams": 2,
+   "playoff_round_type": 1,
+   "playoff_seed_type": 0,
+   "start_week": 1,
+   "last_scored_leg": 2,
+   "leg": 3,
+   "waiver_budget": 100,
+   "num_teams": 4,
+   "divisions": 0
+  }
+ },
+ "v1/league/900000000000000001/rosters": [
+  {
+   "roster_id": 1,
+   "owner_id": "u1",
+   "co_owners": null,
+   "players": [
+    "1001",
+    "1002",
+    "1003",
+    "1004",
+    "1005",
+    "1006",
+    "1007",
+    "1008",
+    "1009",
+    "1010",
+    "1011",
+    "1012",
+    "1013",
+    "BUF"
+   ],
+   "starters": [
+    "1001",
+    "1002",
+    "1003",
+    "1004",
+    "1005",
+    "1006",
+    "1007",
+    "1008",
+    "1009",
+    "1010",
+    "1011",
+    "1012",
+    "1013"
+   ],
+   "reserve": [],
+   "taxi": null,
+   "settings": {
+    "wins": 2,
+    "losses": 0,
+    "ties": 0,
+    "fpts": 236,
+    "fpts_decimal": 40,
+    "fpts_against": 199,
+    "fpts_against_decimal": 90,
+    "waiver_budget_used": 10,
+    "division": null
+   }
+  },
+  {
+   "roster_id": 2,
+   "owner_id": "u2",
+   "co_owners": null,
+   "players": [
+    "1014",
+    "1015",
+    "1016",
+    "1017",
+    "1018",
+    "1019",
+    "1020",
+    "1021",
+    "1022",
+    "1023",
+    "1024",
+    "1025",
+    "1026",
+    "KC"
+   ],
+   "starters": [
+    "1014",
+    "1015",
+    "1016",
+    "1017",
+    "1018",
+    "1019",
+    "1020",
+    "1021",
+    "1022",
+    "1023",
+    "1024",
+    "1025"
+   ],
+   "reserve": [
+    "1026"
+   ],
+   "taxi": null,
+   "settings": {
+    "wins": 1,
+    "losses": 1,
+    "ties": 0,
+    "fpts": 203,
+    "fpts_decimal": 50,
+    "fpts_against": 209,
+    "fpts_against_decimal": 50,
+    "waiver_budget_used": 20,
+    "division": null
+   }
+  },
+  {
+   "roster_id": 3,
+   "owner_id": "u3",
+   "co_owners": null,
+   "players": [
+    "1027",
+    "1028",
+    "1029",
+    "1030",
+    "1031",
+    "1032",
+    "1033",
+    "1034",
+    "1035",
+    "1036",
+    "1037",
+    "1038",
+    "1039",
+    "CIN"
+   ],
+   "starters": [
+    "1027",
+    "1028",
+    "1029",
+    "1030",
+    "1031",
+    "1032",
+    "1033",
+    "1034",
+    "1035",
+    "1036",
+    "1037",
+    "1038",
+    "1039"
+   ],
+   "reserve": [],
+   "taxi": null,
+   "settings": {
+    "wins": 1,
+    "losses": 1,
+    "ties": 0,
+    "fpts": 211,
+    "fpts_decimal": 50,
+    "fpts_against": 210,
+    "fpts_against_decimal": 75,
+    "waiver_budget_used": 30,
+    "division": null
+   }
+  },
+  {
+   "roster_id": 4,
+   "owner_id": "u4",
+   "co_owners": null,
+   "players": [
+    "1040",
+    "1041",
+    "1042",
+    "1043",
+    "1044",
+    "1045",
+    "1046",
+    "1047",
+    "1048",
+    "1049",
+    "1050",
+    "1051",
+    "1052",
+    "DET"
+   ],
+   "starters": [
+    "1040",
+    "1041",
+    "1042",
+    "1043",
+    "1044",
+    "1045",
+    "1046",
+    "1047",
+    "1048",
+    "1049",
+    "1050",
+    "1051",
+    "1052"
+   ],
+   "reserve": [],
+   "taxi": null,
+   "settings": {
+    "wins": 0,
+    "losses": 2,
+    "ties": 0,
+    "fpts": 183,
+    "fpts_decimal": 85,
+    "fpts_against": 215,
+    "fpts_against_decimal": 10,
+    "waiver_budget_used": 40,
+    "division": null
+   }
+  }
+ ],
+ "v1/league/900000000000000001/users": [
+  {
+   "user_id": "u1",
+   "display_name": "manager1",
+   "metadata": {
+    "team_name": "Team Number 1"
+   }
+  },
+  {
+   "user_id": "u2",
+   "display_name": "manager2",
+   "metadata": {
+    "team_name": "Team Number 2"
+   }
+  },
+  {
+   "user_id": "u3",
+   "display_name": "manager3",
+   "metadata": {
+    "team_name": "Team Number 3"
+   }
+  },
+  {
+   "user_id": "u4",
+   "display_name": "manager4",
+   "metadata": {}
+  }
+ ],
+ "v1/players/nfl": {
+  "1001": {
+   "player_id": "1001",
+   "first_name": "T1",
+   "last_name": "QB0",
+   "full_name": "T1 QB0",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1002": {
+   "player_id": "1002",
+   "first_name": "T1",
+   "last_name": "QB1",
+   "full_name": "T1 QB1",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1003": {
+   "player_id": "1003",
+   "first_name": "T1",
+   "last_name": "RB2",
+   "full_name": "T1 RB2",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1004": {
+   "player_id": "1004",
+   "first_name": "T1",
+   "last_name": "RB3",
+   "full_name": "T1 RB3",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1005": {
+   "player_id": "1005",
+   "first_name": "T1",
+   "last_name": "WR4",
+   "full_name": "T1 WR4",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": "Questionable",
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1006": {
+   "player_id": "1006",
+   "first_name": "T1",
+   "last_name": "WR5",
+   "full_name": "T1 WR5",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1007": {
+   "player_id": "1007",
+   "first_name": "T1",
+   "last_name": "WR6",
+   "full_name": "T1 WR6",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1008": {
+   "player_id": "1008",
+   "first_name": "T1",
+   "last_name": "TE7",
+   "full_name": "T1 TE7",
+   "position": "TE",
+   "fantasy_positions": [
+    "TE"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "TE",
+   "depth_chart_order": 1
+  },
+  "1009": {
+   "player_id": "1009",
+   "first_name": "T1",
+   "last_name": "K8",
+   "full_name": "T1 K8",
+   "position": "K",
+   "fantasy_positions": [
+    "K"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "K",
+   "depth_chart_order": 1
+  },
+  "1010": {
+   "player_id": "1010",
+   "first_name": "T1",
+   "last_name": "DL9",
+   "full_name": "T1 DL9",
+   "position": "DE",
+   "fantasy_positions": [
+    "DL"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "DE",
+   "depth_chart_order": 1
+  },
+  "1011": {
+   "player_id": "1011",
+   "first_name": "T1",
+   "last_name": "LB10",
+   "full_name": "T1 LB10",
+   "position": "LB",
+   "fantasy_positions": [
+    "LB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "LB",
+   "depth_chart_order": 1
+  },
+  "1012": {
+   "player_id": "1012",
+   "first_name": "T1",
+   "last_name": "DB11",
+   "full_name": "T1 DB11",
+   "position": "CB",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "CB",
+   "depth_chart_order": 1
+  },
+  "1013": {
+   "player_id": "1013",
+   "first_name": "T1",
+   "last_name": "DB12",
+   "full_name": "T1 DB12",
+   "position": "S",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "BUF",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "S",
+   "depth_chart_order": 1
+  },
+  "BUF": {
+   "player_id": "BUF",
+   "first_name": "BUF City",
+   "last_name": "Defense",
+   "position": "DEF",
+   "fantasy_positions": [
+    "DEF"
+   ],
+   "team": "BUF"
+  },
+  "1014": {
+   "player_id": "1014",
+   "first_name": "T2",
+   "last_name": "QB0",
+   "full_name": "T2 QB0",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1015": {
+   "player_id": "1015",
+   "first_name": "T2",
+   "last_name": "QB1",
+   "full_name": "T2 QB1",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1016": {
+   "player_id": "1016",
+   "first_name": "T2",
+   "last_name": "RB2",
+   "full_name": "T2 RB2",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1017": {
+   "player_id": "1017",
+   "first_name": "T2",
+   "last_name": "RB3",
+   "full_name": "T2 RB3",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1018": {
+   "player_id": "1018",
+   "first_name": "T2",
+   "last_name": "WR4",
+   "full_name": "T2 WR4",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1019": {
+   "player_id": "1019",
+   "first_name": "T2",
+   "last_name": "WR5",
+   "full_name": "T2 WR5",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1020": {
+   "player_id": "1020",
+   "first_name": "T2",
+   "last_name": "WR6",
+   "full_name": "T2 WR6",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1021": {
+   "player_id": "1021",
+   "first_name": "T2",
+   "last_name": "TE7",
+   "full_name": "T2 TE7",
+   "position": "TE",
+   "fantasy_positions": [
+    "TE"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "TE",
+   "depth_chart_order": 1
+  },
+  "1022": {
+   "player_id": "1022",
+   "first_name": "T2",
+   "last_name": "K8",
+   "full_name": "T2 K8",
+   "position": "K",
+   "fantasy_positions": [
+    "K"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "K",
+   "depth_chart_order": 1
+  },
+  "1023": {
+   "player_id": "1023",
+   "first_name": "T2",
+   "last_name": "DL9",
+   "full_name": "T2 DL9",
+   "position": "DE",
+   "fantasy_positions": [
+    "DL"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "DE",
+   "depth_chart_order": 1
+  },
+  "1024": {
+   "player_id": "1024",
+   "first_name": "T2",
+   "last_name": "LB10",
+   "full_name": "T2 LB10",
+   "position": "LB",
+   "fantasy_positions": [
+    "LB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "LB",
+   "depth_chart_order": 1
+  },
+  "1025": {
+   "player_id": "1025",
+   "first_name": "T2",
+   "last_name": "DB11",
+   "full_name": "T2 DB11",
+   "position": "CB",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "CB",
+   "depth_chart_order": 1
+  },
+  "1026": {
+   "player_id": "1026",
+   "first_name": "T2",
+   "last_name": "DB12",
+   "full_name": "T2 DB12",
+   "position": "S",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "KC",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "S",
+   "depth_chart_order": 1
+  },
+  "KC": {
+   "player_id": "KC",
+   "first_name": "KC City",
+   "last_name": "Defense",
+   "position": "DEF",
+   "fantasy_positions": [
+    "DEF"
+   ],
+   "team": "KC"
+  },
+  "1027": {
+   "player_id": "1027",
+   "first_name": "T3",
+   "last_name": "QB0",
+   "full_name": "T3 QB0",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1028": {
+   "player_id": "1028",
+   "first_name": "T3",
+   "last_name": "QB1",
+   "full_name": "T3 QB1",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1029": {
+   "player_id": "1029",
+   "first_name": "T3",
+   "last_name": "RB2",
+   "full_name": "T3 RB2",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1030": {
+   "player_id": "1030",
+   "first_name": "T3",
+   "last_name": "RB3",
+   "full_name": "T3 RB3",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1031": {
+   "player_id": "1031",
+   "first_name": "T3",
+   "last_name": "WR4",
+   "full_name": "T3 WR4",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1032": {
+   "player_id": "1032",
+   "first_name": "T3",
+   "last_name": "WR5",
+   "full_name": "T3 WR5",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1033": {
+   "player_id": "1033",
+   "first_name": "T3",
+   "last_name": "WR6",
+   "full_name": "T3 WR6",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1034": {
+   "player_id": "1034",
+   "first_name": "T3",
+   "last_name": "TE7",
+   "full_name": "T3 TE7",
+   "position": "TE",
+   "fantasy_positions": [
+    "TE"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "TE",
+   "depth_chart_order": 1
+  },
+  "1035": {
+   "player_id": "1035",
+   "first_name": "T3",
+   "last_name": "K8",
+   "full_name": "T3 K8",
+   "position": "K",
+   "fantasy_positions": [
+    "K"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "K",
+   "depth_chart_order": 1
+  },
+  "1036": {
+   "player_id": "1036",
+   "first_name": "T3",
+   "last_name": "DL9",
+   "full_name": "T3 DL9",
+   "position": "DE",
+   "fantasy_positions": [
+    "DL"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "DE",
+   "depth_chart_order": 1
+  },
+  "1037": {
+   "player_id": "1037",
+   "first_name": "T3",
+   "last_name": "LB10",
+   "full_name": "T3 LB10",
+   "position": "LB",
+   "fantasy_positions": [
+    "LB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "LB",
+   "depth_chart_order": 1
+  },
+  "1038": {
+   "player_id": "1038",
+   "first_name": "T3",
+   "last_name": "DB11",
+   "full_name": "T3 DB11",
+   "position": "CB",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "CB",
+   "depth_chart_order": 1
+  },
+  "1039": {
+   "player_id": "1039",
+   "first_name": "T3",
+   "last_name": "DB12",
+   "full_name": "T3 DB12",
+   "position": "S",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "CIN",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "S",
+   "depth_chart_order": 1
+  },
+  "CIN": {
+   "player_id": "CIN",
+   "first_name": "CIN City",
+   "last_name": "Defense",
+   "position": "DEF",
+   "fantasy_positions": [
+    "DEF"
+   ],
+   "team": "CIN"
+  },
+  "1040": {
+   "player_id": "1040",
+   "first_name": "T4",
+   "last_name": "QB0",
+   "full_name": "T4 QB0",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1041": {
+   "player_id": "1041",
+   "first_name": "T4",
+   "last_name": "QB1",
+   "full_name": "T4 QB1",
+   "position": "QB",
+   "fantasy_positions": [
+    "QB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "QB",
+   "depth_chart_order": 1
+  },
+  "1042": {
+   "player_id": "1042",
+   "first_name": "T4",
+   "last_name": "RB2",
+   "full_name": "T4 RB2",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1043": {
+   "player_id": "1043",
+   "first_name": "T4",
+   "last_name": "RB3",
+   "full_name": "T4 RB3",
+   "position": "RB",
+   "fantasy_positions": [
+    "RB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "RB",
+   "depth_chart_order": 1
+  },
+  "1044": {
+   "player_id": "1044",
+   "first_name": "T4",
+   "last_name": "WR4",
+   "full_name": "T4 WR4",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1045": {
+   "player_id": "1045",
+   "first_name": "T4",
+   "last_name": "WR5",
+   "full_name": "T4 WR5",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1046": {
+   "player_id": "1046",
+   "first_name": "T4",
+   "last_name": "WR6",
+   "full_name": "T4 WR6",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "WR",
+   "depth_chart_order": 1
+  },
+  "1047": {
+   "player_id": "1047",
+   "first_name": "T4",
+   "last_name": "TE7",
+   "full_name": "T4 TE7",
+   "position": "TE",
+   "fantasy_positions": [
+    "TE"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "TE",
+   "depth_chart_order": 1
+  },
+  "1048": {
+   "player_id": "1048",
+   "first_name": "T4",
+   "last_name": "K8",
+   "full_name": "T4 K8",
+   "position": "K",
+   "fantasy_positions": [
+    "K"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "K",
+   "depth_chart_order": 1
+  },
+  "1049": {
+   "player_id": "1049",
+   "first_name": "T4",
+   "last_name": "DL9",
+   "full_name": "T4 DL9",
+   "position": "DE",
+   "fantasy_positions": [
+    "DL"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "DE",
+   "depth_chart_order": 1
+  },
+  "1050": {
+   "player_id": "1050",
+   "first_name": "T4",
+   "last_name": "LB10",
+   "full_name": "T4 LB10",
+   "position": "LB",
+   "fantasy_positions": [
+    "LB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "LB",
+   "depth_chart_order": 1
+  },
+  "1051": {
+   "player_id": "1051",
+   "first_name": "T4",
+   "last_name": "DB11",
+   "full_name": "T4 DB11",
+   "position": "CB",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "CB",
+   "depth_chart_order": 1
+  },
+  "1052": {
+   "player_id": "1052",
+   "first_name": "T4",
+   "last_name": "DB12",
+   "full_name": "T4 DB12",
+   "position": "S",
+   "fantasy_positions": [
+    "DB"
+   ],
+   "team": "DET",
+   "status": "Active",
+   "injury_status": null,
+   "depth_chart_position": "S",
+   "depth_chart_order": 1
+  },
+  "DET": {
+   "player_id": "DET",
+   "first_name": "DET City",
+   "last_name": "Defense",
+   "position": "DEF",
+   "fantasy_positions": [
+    "DEF"
+   ],
+   "team": "DET"
+  },
+  "9999": {
+   "player_id": "9999",
+   "first_name": "Free",
+   "last_name": "Agent",
+   "full_name": "Free Agent",
+   "position": "WR",
+   "fantasy_positions": [
+    "WR"
+   ],
+   "team": "BUF"
+  }
+ },
+ "v1/league/900000000000000001/matchups/1": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 121.4,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 98.6,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 2,
+   "points": 110.2,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 4,
+   "matchup_id": 2,
+   "points": 95.75,
+   "starters": [],
+   "players": []
+  }
+ ],
+ "v1/league/900000000000000001/matchups/2": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 115.0,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 1,
+   "points": 101.3,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 2,
+   "points": 104.9,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 4,
+   "matchup_id": 2,
+   "points": 88.1,
+   "starters": [],
+   "players": []
+  }
+ ],
+ "v1/league/900000000000000001/matchups/3": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 0.0,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 4,
+   "matchup_id": 1,
+   "points": 0.0,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 2,
+   "points": 0.0,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 2,
+   "points": 0.0,
+   "starters": [],
+   "players": []
+  }
+ ],
+ "projections/nfl/2026/3": [
+  {
+   "player_id": "1001",
+   "week": 3,
+   "season": "2026",
+   "team": "BUF",
+   "opponent": "KC",
+   "stats": {
+    "pass_yd": 265.0,
+    "pass_td": 1.9,
+    "pass_int": 0.7,
+    "rush_yd": 28.0,
+    "rush_td": 0.3,
+    "pts_ppr": 21.0
+   }
+  },
+  {
+   "player_id": "1003",
+   "week": 3,
+   "team": "BUF",
+   "opponent": "KC",
+   "stats": {
+    "rush_yd": 72.0,
+    "rush_td": 0.5,
+    "rec": 3.0,
+    "rec_yd": 22.0,
+    "fum_lost": 0.1
+   }
+  },
+  {
+   "player_id": "1008",
+   "week": 3,
+   "team": "BUF",
+   "opponent": "KC",
+   "stats": {
+    "rec": 5.0,
+    "rec_yd": 50.0,
+    "rec_td": 0.4
+   }
+  },
+  {
+   "player_id": "1010",
+   "week": 3,
+   "team": "BUF",
+   "opponent": "KC",
+   "stats": {
+    "idp_tkl_solo": 2.5,
+    "idp_tkl_ast": 1.0,
+    "idp_sack": 0.5
+   }
+  },
+  {
+   "player_id": "BUF",
+   "week": 3,
+   "team": "BUF",
+   "opponent": "KC",
+   "stats": {
+    "sack": 2.6,
+    "int": 0.8,
+    "pts_allow": 22.4
+   }
+  },
+  {
+   "player_id": "9999",
+   "week": 3,
+   "team": "BUF",
+   "opponent": "KC",
+   "stats": {
+    "rec": 2.0,
+    "rec_yd": 20.0
+   },
+   "extra": true
+  }
+ ],
+ "projections/nfl/2026/4": [],
+ "projections/nfl/2026/5": [],
+ "v1/league/900000000000000001/winners_bracket": [
+  {
+   "r": 1,
+   "m": 1,
+   "t1": 1,
+   "t2": 3,
+   "w": null,
+   "l": null,
+   "p": 1
+  }
+ ],
+ "projections/nfl/2026": [
+  {
+   "player_id": "1001",
+   "stats": {
+    "pass_yd": 4250.0,
+    "pass_td": 34.0,
+    "pass_int": 10.0,
+    "rush_yd": 300.0,
+    "rush_td": 4.0,
+    "gp": 17.0
+   }
+  },
+  {
+   "player_id": "1011",
+   "stats": {
+    "idp_tkl_solo": 68.0,
+    "idp_tkl_ast": 34.0,
+    "idp_sack": 4.25,
+    "gp": 17.0
+   }
+  }
+ ],
+ "stats/nfl/2026/1": [
+  {
+   "player_id": "1001",
+   "stats": {
+    "pass_yd": 150.0,
+    "pass_td": 1.0,
+    "gp": 1.0
+   }
+  },
+  {
+   "player_id": "1011",
+   "stats": {
+    "idp_tkl_solo": 8.0,
+    "idp_sack": 1.0,
+    "gp": 1.0
+   }
+  },
+  {
+   "player_id": "1002",
+   "stats": {
+    "gms_active": 1.0
+   }
+  }
+ ],
+ "stats/nfl/2026/2": [
+  {
+   "player_id": "1001",
+   "stats": {
+    "pass_yd": 200.0,
+    "pass_td": 1.0,
+    "gp": 1.0
+   }
+  },
+  {
+   "player_id": "1011",
+   "stats": {
+    "idp_tkl_solo": 8.0,
+    "idp_sack": 1.0,
+    "gp": 1.0
+   }
+  }
+ ]
+}
