@@ -114,7 +114,6 @@ def odds(
     manager: ManagerOpt = None,
     sims: Annotated[int, typer.Option("--sims", "-n", help="Number of simulations.")] = 10_000,
     seed: Annotated[int, typer.Option("--seed", help="Random seed.")] = 0,
-    family: Annotated[str, typer.Option("--family", help="Error model family.")] = "parametric",
     cache_dir: CacheOpt = None,
     refresh: RefreshOpt = False,
 ) -> None:
@@ -126,11 +125,7 @@ def odds(
             bracket = client.winners_bracket(league_id)
         except SleeperError:
             bracket = []
-        try:
-            models, fitted = load_models(client.cache_dir, state.league.scoring_settings, family)
-        except ValueError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(1) from exc
+        models, fitted = load_models(client.cache_dir, state.league.scoring_settings)
         inputs = build_inputs(state, SleeperProjectionSource(client), bracket, models.talent)
     if not inputs.weeks:
         console.print("[yellow]Season is complete; nothing left to simulate.[/yellow]")
@@ -138,8 +133,7 @@ def odds(
     result = simulate(inputs, models, n_sims=sims, seed=seed)
     report.league_summary(state, console)
     console.print(
-        f"Models: {models.errors.family}, "
-        + ("fitted to this league's scoring" if fitted else "default (run `ffsim fit`)")
+        "Models: " + ("fitted to this league's scoring" if fitted else "default (run `ffsim fit`)")
     )
     console.print(report.odds_table(result, state, team))
     if team:
@@ -154,7 +148,6 @@ def fit(
     seasons: Annotated[
         str, typer.Option("--seasons", help="Comma-separated past seasons.")
     ] = "2023,2024,2025",
-    family: Annotated[str, typer.Option("--family", help="parametric | bootstrap")] = "parametric",
     cache_dir: CacheOpt = None,
     refresh: RefreshOpt = False,
 ) -> None:
@@ -165,9 +158,9 @@ def fit(
         console.print(f"Loading {years} projections and stats (first run downloads ~1 min)…")
         store = HistoryStore(client)
         settings = state.league.scoring_settings
-        models, diags = fit_models(store, years, settings, family)
+        models, diags = fit_models(store, years, settings)
         models.meta["league_id"] = league_id
-        path = models_path(client.cache_dir, settings, family)
+        path = models_path(client.cache_dir, settings)
         models.save(path)
         cov = coverage(models.errors, store.rows(years), settings)
     console.print(report.error_model_table(models.errors, cov))
@@ -359,7 +352,7 @@ def calibrate(
         str, typer.Option("--seasons", help="Comma-separated past seasons.")
     ] = "2023,2024,2025",
     apply: Annotated[
-        bool, typer.Option("--apply", help="Save models using the best family per position.")
+        bool, typer.Option("--apply", help="Save models refitted on all the checked seasons.")
     ] = False,
     cache_dir: CacheOpt = None,
     refresh: RefreshOpt = False,
@@ -374,16 +367,15 @@ def calibrate(
             rep = leave_one_season_out(store, years, settings)
         for table in report.calibration_tables(rep):
             console.print(table)
-        choice = rep.choose_families()
         if apply:
             with console.status("Refitting on all seasons…"):
-                models = calibrated_models(store, years, settings, choice)
+                models = calibrated_models(store, years, settings)
             models.meta["league_id"] = league_id
-            path = models_path(client.cache_dir, settings, "parametric")
+            path = models_path(client.cache_dir, settings)
             models.save(path)
-            console.print(f"Saved models ({choice}) to {path}")
+            console.print(f"Saved models to {path}")
         else:
-            console.print("[dim]Run with --apply to save models using the ✓ families.[/dim]")
+            console.print("[dim]Run with --apply to save models refitted on these seasons.[/dim]")
 
 
 @app.command()

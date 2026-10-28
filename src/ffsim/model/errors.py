@@ -13,10 +13,8 @@ so the shape changes smoothly with the projection. Every table is normalized so
 the distribution mean equals the projection; shifting the centre is the job of
 the Bayesian layer.
 
-Two families build the tables:
-
-* ``parametric``: dud mass + lognormal for ratio positions; shifted gamma for K/DEF
-* ``bootstrap``: empirical quantiles of historical ratios/residuals
+Each table is the empirical quantile function (a bootstrap) of historical
+ratios or residuals in its bucket.
 
 Sampling takes latent normals ``z`` (independent or correlated) and maps them
 through the tables, which is what lets the copula layer reuse this model.
@@ -37,7 +35,6 @@ from ffsim.data.history import HistoryRow
 
 RATIO_POSITIONS = ("QB", "RB", "WR", "TE", "DL", "LB", "DB")
 ADDITIVE_POSITIONS = ("K", "DEF")
-FAMILIES = ("parametric", "bootstrap")
 
 Z_MIN, Z_MAX, Z_POINTS = -4.0, 4.0, 401
 Z_GRID = np.linspace(Z_MIN, Z_MAX, Z_POINTS)
@@ -48,7 +45,6 @@ _W[[0, -1]] *= 0.5
 _W /= _W.sum()
 U_GRID = special.ndtr(Z_GRID)
 
-DUD_RATIO = 0.15  # ratio below which a game counts as a "dud" (early exit, no role)
 MIN_RATIO_PROJ = 1.0  # ratio positions: ignore history rows projected below this
 N_BUCKETS = {"ratio": 4, "additive": 3}
 MIN_BUCKET_ROWS = 60
@@ -80,7 +76,6 @@ class PositionModel:
 
 @dataclass
 class ErrorModel:
-    family: str
     positions: dict[str, PositionModel]
     meta: dict[str, object] = field(default_factory=dict)
 
@@ -89,7 +84,6 @@ class ErrorModel:
     def to_json(self) -> str:
         return json.dumps(
             {
-                "family": self.family,
                 "meta": self.meta,
                 "positions": {k: asdict(v) for k, v in self.positions.items()},
             }
@@ -99,7 +93,6 @@ class ErrorModel:
     def from_json(cls, text: str) -> ErrorModel:
         d = json.loads(text)
         return cls(
-            family=d["family"],
             meta=d.get("meta", {}),
             positions={k: PositionModel(**v) for k, v in d["positions"].items()},
         )
@@ -212,31 +205,7 @@ def _normalize(table: np.ndarray, kind: str) -> np.ndarray:
     return table / mu if kind == "ratio" else table - mu
 
 
-def _ratio_parametric(r: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
-    dud = r < DUD_RATIO
-    p = float(dud.mean())
-    d = float(r[dud].mean()) if dud.any() else 0.0
-    logs = np.log(r[~dud])
-    sigma = float(logs.std())
-    mu = np.log((1 - p * d) / (1 - p)) - sigma**2 / 2
-    u_body = np.clip((U_GRID - p) / (1 - p), 1e-12, 1 - 1e-12)
-    table = np.where(p > U_GRID, d, np.exp(mu + sigma * special.ndtri(u_body)))
-    return table, {"p_dud": p, "dud_ratio": d, "sigma_log": sigma}
-
-
-def _additive_parametric(
-    actual: np.ndarray, resid: np.ndarray, center: float
-) -> tuple[np.ndarray, dict[str, float]]:
-    s = float(resid.std())
-    floor = float(np.percentile(actual, 0.5)) - 0.5
-    span = max(center - floor, 0.5)
-    k = (span / s) ** 2
-    theta = s**2 / span
-    table = floor + special.gammaincinv(k, U_GRID) * theta - center
-    return table, {"sd": s, "floor": floor, "gamma_shape": k}
-
-
-def fit_position(proj: np.ndarray, actual: np.ndarray, kind: str, family: str) -> PositionModel:
+def fit_position(proj: np.ndarray, actual: np.ndarray, kind: str) -> PositionModel:
     if kind == "ratio":
         keep = proj >= MIN_RATIO_PROJ
         proj, actual = proj[keep], actual[keep]
@@ -257,18 +226,11 @@ def fit_position(proj: np.ndarray, actual: np.ndarray, kind: str, family: str) -
         if kind == "ratio":
             r = a / m
             diag["mean_ratio"] = float(r.mean())
-            if family == "parametric":
-                table, extra = _ratio_parametric(r)
-            else:
-                table, extra = np.quantile(r, U_GRID), {}
+            table = np.quantile(r, U_GRID)
         else:
             e = a - m
             diag["mean_resid"] = float(e.mean())
-            if family == "parametric":
-                table, extra = _additive_parametric(a, e - e.mean(), center)
-            else:
-                table, extra = np.quantile(e, U_GRID), {}
-        diag.update(extra)
+            table = np.quantile(e, U_GRID)
         centers.append(center)
         tables.append(_normalize(np.asarray(table, dtype=np.float64), kind).round(5).tolist())
         diags.append({k: round(v, 4) for k, v in diag.items()})
@@ -278,11 +240,8 @@ def fit_position(proj: np.ndarray, actual: np.ndarray, kind: str, family: str) -
 def fit_error_model(
     rows: Iterable[HistoryRow],
     settings: Mapping[str, float],
-    family: str = "parametric",
     meta: Mapping[str, object] | None = None,
 ) -> ErrorModel:
-    if family not in FAMILIES:
-        raise ValueError(f"family must be one of {FAMILIES}")
     pairs: dict[str, list[tuple[float, float]]] = defaultdict(list)
     for row in rows:
         if not row.played:
@@ -297,8 +256,8 @@ def fit_error_model(
         if len(data) < MIN_BUCKET_ROWS:
             continue
         kind = "ratio" if pos in RATIO_POSITIONS else "additive"
-        positions[pos] = fit_position(data[:, 0], data[:, 1], kind, family)
-    return ErrorModel(family=family, positions=positions, meta=dict(meta or {}))
+        positions[pos] = fit_position(data[:, 0], data[:, 1], kind)
+    return ErrorModel(positions=positions, meta=dict(meta or {}))
 
 
 def coverage(
