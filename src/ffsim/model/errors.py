@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -169,7 +169,7 @@ class ErrorModel:
         return float(self.to_latent_many(np.array([points]), np.array([mean]), [position])[0])
 
     def to_latent_many(
-        self, points: np.ndarray, means: np.ndarray, positions: list[str | None]
+        self, points: np.ndarray, means: np.ndarray, positions: Sequence[str | None]
     ) -> np.ndarray:
         """Vectorized inverse of ``sample`` for many player-weeks.
 

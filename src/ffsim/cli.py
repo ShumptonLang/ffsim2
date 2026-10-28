@@ -5,10 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
+import numpy as np
 import typer
 from rich.console import Console
 
 from ffsim import report
+from ffsim.backtest import Replay, SeasonData, mock_replay, predict, sleeper_replay
+from ffsim.calibrate import calibrated_models, leave_one_season_out
 from ffsim.data.history import HistoryStore
 from ffsim.data.projections import SleeperProjectionSource
 from ffsim.data.sleeper import SleeperClient, SleeperError
@@ -17,9 +20,9 @@ from ffsim.decisions.lineup import lineup_options
 from ffsim.decisions.plan import make_plan
 from ffsim.decisions.trades import evaluate_trade, find_trades
 from ffsim.decisions.waivers import waiver_options
-from ffsim.league import LeagueState, Team, TeamNotFound, load_league_state
+from ffsim.league import League, LeagueState, Team, TeamNotFound, load_league_state
 from ffsim.model.errors import coverage
-from ffsim.model.models import fit_models, load_models, models_path
+from ffsim.model.models import ModelSet, fit_models, load_models, models_path
 from ffsim.scoring import score
 from ffsim.sim.engine import Evaluator, simulate
 from ffsim.sim.inputs import build_inputs
@@ -347,6 +350,123 @@ def plan(
     if p.trades:
         console.print(report.trade_table(p.trades, ctx.state))
     console.print(_NOISE_NOTE)
+
+
+@app.command()
+def calibrate(
+    league_id: LeagueOpt,
+    seasons: Annotated[
+        str, typer.Option("--seasons", help="Comma-separated past seasons.")
+    ] = "2023,2024,2025",
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Save models using the best family per position.")
+    ] = False,
+    cache_dir: CacheOpt = None,
+    refresh: RefreshOpt = False,
+) -> None:
+    """Leave-one-season-out checks of distributions, blending and correlation."""
+    client, state = _load(league_id, cache_dir, refresh)
+    with client:
+        years = [int(s) for s in seasons.split(",") if s.strip()]
+        store = HistoryStore(client)
+        settings = state.league.scoring_settings
+        with console.status("Fitting and scoring each held-out season…"):
+            rep = leave_one_season_out(store, years, settings)
+        for table in report.calibration_tables(rep):
+            console.print(table)
+        choice = rep.choose_families()
+        if apply:
+            with console.status("Refitting on all seasons…"):
+                models = calibrated_models(store, years, settings, choice)
+            models.meta["league_id"] = league_id
+            path = models_path(client.cache_dir, settings, "parametric")
+            models.save(path)
+            console.print(f"Saved models ({choice}) to {path}")
+        else:
+            console.print("[dim]Run with --apply to save models using the ✓ families.[/dim]")
+
+
+@app.command()
+def backtest(
+    league_id: LeagueOpt,
+    seasons: Annotated[
+        str, typer.Option("--seasons", help="Comma-separated past seasons.")
+    ] = "2023,2024,2025",
+    leagues: Annotated[
+        int, typer.Option("--leagues", help="Mock leagues per season (0 to skip).")
+    ] = 10,
+    cutoffs: Annotated[
+        str, typer.Option("--cutoffs", help="Weeks after which to predict.")
+    ] = "3,6,9,12",
+    replay: Annotated[
+        list[str] | None, typer.Option("--replay", help="Completed Sleeper league ID to replay.")
+    ] = None,
+    sims: SimsOpt = 2_000,
+    refit: Annotated[
+        bool, typer.Option("--refit/--no-refit", help="Fit models without the tested season.")
+    ] = True,
+    seed: SeedOpt = 0,
+    cache_dir: CacheOpt = None,
+    refresh: RefreshOpt = False,
+) -> None:
+    """Replay past seasons and score predicted playoff and title odds."""
+    client, state = _load(league_id, cache_dir, refresh)
+    with client:
+        store = HistoryStore(client)
+        years = [int(s) for s in seasons.split(",") if s.strip()]
+        cuts = [int(c) for c in cutoffs.split(",") if c.strip()]
+        rng = np.random.default_rng(seed)
+
+        jobs: list[tuple[Replay, League]] = []
+        for season in years:
+            for k in range(leagues):
+                data = SeasonData.load(store, season, state.league.scoring_settings)
+                jobs.append(
+                    (mock_replay(data, state.league, rng, f"mock {season} #{k + 1}"), state.league)
+                )
+        for rid in replay or []:
+            try:
+                jobs.append(sleeper_replay(client, rid))
+            except SleeperError as exc:
+                console.print(f"[red]Skipping {rid}: {exc}[/red]")
+
+        model_cache: dict[tuple[int, tuple], ModelSet] = {}
+        data_cache: dict[tuple[int, tuple], SeasonData] = {}
+        preds = []
+        with console.status("Replaying seasons…") as status:
+            for rep, lg in jobs:
+                settings = lg.scoring_settings
+                key = (rep.season, tuple(sorted(settings.items())))
+                if key not in data_cache:
+                    data_cache[key] = SeasonData.load(store, rep.season, settings)
+                if key not in model_cache:
+                    train = [y for y in years if y != rep.season] if refit else []
+                    if train:
+                        status.update(f"Fitting models without {rep.season}…")
+                        model_cache[key], _ = fit_models(store, train, settings)
+                    else:
+                        model_cache[key], _ = load_models(client.cache_dir, settings)
+                for cut in cuts:
+                    if cut + 1 >= rep.playoffs.start_week:
+                        continue
+                    status.update(f"{rep.label}: predicting after week {cut}…")
+                    preds.append(predict(rep, data_cache[key], cut, model_cache[key], sims, seed))
+    if not preds:
+        console.print("Nothing to score.")
+        raise typer.Exit(1)
+    console.print(
+        f"{len(jobs)} season replays in this league's format "
+        f"({state.league.total_rosters} teams, {state.league.playoffs.teams}-team playoffs)."
+    )
+    for table in report.backtest_tables(preds):
+        console.print(table)
+    console.print(
+        "[dim]Brier: mean squared error of the probabilities (lower is better). Skill: "
+        "improvement over a records-only baseline that treats every remaining game as a "
+        "coin flip. Mock leagues are drafted from preseason projections and played out with "
+        "real NFL scores; rosters stay fixed all season. Intervals resample whole "
+        "leagues.[/dim]"
+    )
 
 
 _NOISE_NOTE = (

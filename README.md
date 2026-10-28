@@ -5,7 +5,7 @@ decisions (start/sit, waivers, FAAB, trades) by how much each one changes their
 **championship probability**, not by projected points. See [docs/PLAN.md](docs/PLAN.md)
 for the full design.
 
-**Status:** milestones 1–5 of 6 are done.
+**Status:** all six milestones in the plan are done.
 
 1. Sleeper client and cache, league-specific scoring (including superflex and IDP),
    and the league model.
@@ -27,7 +27,46 @@ for the full design.
    pickups (with a FAAB bid heuristic in FAAB leagues), trade evaluation for both
    sides, a trade finder, and a one-page weekly plan.
 
-Next: calibration and backtesting against past seasons (milestone 6).
+6. Calibration and backtesting. `ffsim calibrate` checks every model on held-out
+   seasons; `ffsim backtest` replays past NFL seasons and scores the predicted
+   playoff and title odds against what happened.
+
+## How well it works
+
+Held-out checks on 2023–2025 (each season scored by models fitted on the other two):
+
+- **Outcome distributions:** for startable players, actual scores land below the
+  model's 10th / 50th / 90th percentiles 8–11% / 47–51% / 89–91% of the time with
+  the bootstrap family. It beats the parametric family on CRPS at every position,
+  so `ffsim calibrate --apply` and the shipped defaults use it.
+- **Within-game correlation:** observed vs. model on held-out seasons: QB–WR1
+  +0.27 / +0.27, QB–TE1 +0.18 / +0.17, RB1–RB2 −0.07 / −0.05, DEF vs. opposing
+  QB −0.41 / −0.39.
+- **Bayesian blend:** for offense, Sleeper's weekly projections are hard to improve
+  (held-out change −0.6% to +0.2% in next-week squared error). The blend matters
+  for IDP, where Sleeper's projections are weak.
+- **Season odds (backtest):** 45 mock leagues in a 10-team, 6-team-playoff PPR
+  format, drafted from preseason projections and played out with real 2023–2025
+  scores. P(playoffs) beats a records-only, coin-flip baseline at every cutoff
+  week: **+6% Brier skill overall** (90% interval +3% to +9%, resampling whole
+  leagues), and +8% at week 12. Calibration is good. P(champion) is about even with
+  the baseline (+0.4%, interval −2% to +3%). Once you're in a 3-round, single-week
+  bracket, the title is mostly luck; the model's edge is in who gets in and who
+  gets a bye.
+
+## Limitations
+
+- In simulations, rosters only change through the move being evaluated. Nobody
+  picks up free agents to cover injuries, so late-season scoring is slightly
+  understated.
+- Managers are assumed to set projection-optimal lineups.
+- Projections come from Sleeper's undocumented app API.
+- Two inputs are assumptions rather than fits: the chance a Questionable player
+  plays (75%) and the FAAB bid rule.
+- Trade acceptability is a proxy (perceived value and projected lineup points),
+  not a model of the other manager.
+- The backtest uses mock leagues because no completed Sleeper league was
+  available. `ffsim backtest --replay <league_id>` replays a real one.
 
 ## Install
 
@@ -49,6 +88,13 @@ ffsim lineup      -l <LEAGUE_ID> -m <manager>     # start/sit options by Δ titl
 ffsim waivers     -l <LEAGUE_ID> -m <manager>     # add/drop pairs by Δ title odds (+ FAAB bids)
 ffsim trade       -l <LEAGUE_ID> -m <manager> --give "James Cook" --get "Christian Watson"
 ffsim find-trades -l <LEAGUE_ID> -m <manager> [--max-size 2] [--with <team>]
+```
+
+Model checks:
+
+```bash
+ffsim calibrate -l <LEAGUE_ID> [--apply]          # held-out checks; --apply saves the best family per position
+ffsim backtest  -l <LEAGUE_ID> [--leagues 10] [--cutoffs 3,6,9,12] [--replay <old_league_id> ...]
 ```
 
 Δ values are percentage points of probability. They are dimmed when within two

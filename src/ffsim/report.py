@@ -9,6 +9,8 @@ import numpy as np
 from rich.console import Console
 from rich.table import Table
 
+from ffsim.backtest import Prediction, calibration_bins, score_predictions, skill_interval
+from ffsim.calibrate import CalibrationReport
 from ffsim.decisions.lineup import LineupOption
 from ffsim.decisions.trades import TradeResult
 from ffsim.decisions.waivers import WaiverOption
@@ -351,3 +353,83 @@ def _player_label(state: LeagueState, pid: str) -> str:
     p = state.player(pid)
     tag = "/".join(p.fantasy_positions) or (p.position or "?")
     return f"{p.name} ({tag}, {p.team or 'FA'})"
+
+
+def calibration_tables(rep: CalibrationReport) -> list[Table]:
+    seasons = ", ".join(str(x) for x in rep.seasons)
+    dist = Table(title=f"Outcome distributions, held out one season at a time ({seasons})")
+    for col in ("Pos", "n", "Family", "CRPS", "Below p10", "p50", "p90", "Best"):
+        dist.add_column(col, justify="left" if col in {"Pos", "Family", "Best"} else "right")
+    choice = rep.choose_families()
+    for pos in sorted(choice):
+        for k, (fam, d) in enumerate(sorted(rep.dist.items())):
+            if pos not in d:
+                continue
+            sc = d[pos]
+            dist.add_row(
+                pos if k == 0 else "",
+                f"{sc.n:,}" if k == 0 else "",
+                fam,
+                f"{sc.crps:.3f}",
+                _pct(sc.below[0]),
+                _pct(sc.below[1]),
+                _pct(sc.below[2]),
+                "✓" if choice[pos] == fam else "",
+            )
+    blend = Table(title="Bayesian blend: next-week squared error, held out")
+    for col in ("Pos", "n", "Sleeper only", "Blended", "Change"):
+        blend.add_column(col, justify="left" if col == "Pos" else "right")
+    for pos, (n, mse_s, mse_b) in sorted(rep.blend.items()):
+        if n < 50:
+            continue
+        change = f"{100 * (mse_b - mse_s) / mse_s:+.1f}%"
+        blend.add_row(pos, f"{n:,}", f"{mse_s:.2f}", f"{mse_b:.2f}", change)
+    corr = Table(title="Within-game correlation, held out")
+    for col in ("Pair", "Side", "Observed", "Model", "n"):
+        corr.add_column(col, justify="left" if col in {"Pair", "Side"} else "right")
+    for a, b, same, obs, mod, n in rep.corr:
+        corr.add_row(
+            f"{a}–{b}", "same team" if same else "opponents", f"{obs:+.2f}", f"{mod:+.2f}", f"{n:,}"
+        )
+    return [dist, blend, corr]
+
+
+def backtest_tables(preds: list[Prediction]) -> list[Table]:
+    out = []
+    for target in ("playoffs", "champion"):
+        t = Table(title=f"Backtest: P({target}) vs. what happened")
+        for col in (
+            "Cutoff week",
+            "Teams",
+            "Brier",
+            "Records-only",
+            "Skill",
+            "90% interval",
+            "Log loss",
+            "Records-only ",
+        ):
+            t.add_column(col, justify="right")
+        cuts = sorted({p.cutoff for p in preds})
+        for cut in [*cuts, None]:
+            sel = [p for p in preds if cut is None or p.cutoff == cut]
+            sc = score_predictions(sel, target)
+            lo, hi = skill_interval(sel, target)
+            t.add_row(
+                "all" if cut is None else str(cut),
+                f"{sc.n_teams:,}",
+                f"{sc.brier:.4f}",
+                f"{sc.brier_base:.4f}",
+                f"{100 * sc.skill:+.1f}%",
+                f"{100 * lo:+.0f}% to {100 * hi:+.0f}%",
+                f"{sc.log_loss:.3f}",
+                f"{sc.log_loss_base:.3f}",
+                style="bold" if cut is None else None,
+            )
+        out.append(t)
+    cal = Table(title="Calibration of P(playoffs)")
+    for col in ("Predicted bin", "Mean predicted", "Observed", "Teams"):
+        cal.add_column(col, justify="right")
+    for lo, mean_p, obs, n in calibration_bins(preds):
+        cal.add_row(f"≥ {100 * lo:.0f}%", _pct(mean_p), _pct(obs), f"{n:,}")
+    out.append(cal)
+    return out

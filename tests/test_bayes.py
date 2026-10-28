@@ -31,6 +31,15 @@ def test_prior_rate_scores_an_average_game():
     assert prior_rate({"pass_yd": 0, "gp": 17}, s, "QB") is None
 
 
+def test_prior_rate_handles_sleeper_defense_lines():
+    s = {"sack": 1, "int": 2, "pts_allow_0": 10, "pts_allow_14_20": 1}
+    # Sleeper DEF season line: gp=1 and a stray shutout flag
+    line = {"sack": 34.0, "int": 17.0, "gp": 1.0, "pts_allow_0": 1.0}
+    assert prior_rate(line, s, "DEF") == pytest.approx((34 + 34) / 17)
+    with_pa = {"sack": 34.0, "gp": 17.0, "pts_allow": 17 * 17.0}
+    assert prior_rate(with_pa, s, "DEF") == pytest.approx(2 + 1)
+
+
 def test_roundtrip():
     m = TalentModel(blend={"WR": (0.3, 12.0)}, rho={"WR": 0.15}, default_rho=0.1)
     m2 = TalentModel.from_dict(m.to_dict())

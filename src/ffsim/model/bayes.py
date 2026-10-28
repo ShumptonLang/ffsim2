@@ -25,6 +25,7 @@ against a centre fixed at the cutoff week (as the simulation's centres are).
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ from ffsim.model.errors import ErrorModel
 from ffsim.scoring import score
 
 GAMES_PER_SEASON = 17
+_TIER_FLAG = re.compile(r"^(pts_allow|yds_allow)_\d")
 # Players below this projection are rarely started; they're left out of fitting.
 STARTABLE = {"DL": 3.0, "LB": 3.0, "DB": 3.0}
 STARTABLE_DEFAULT = 5.0
@@ -97,10 +99,14 @@ def prior_rate(
 
     The season line is scaled to an average game *before* scoring, so per-game
     thresholds (300-yard bonuses, points-allowed tiers) are judged per game.
-    Sleeper lists gp=18 for full-season projections; 17 is the real maximum.
+    Sleeper's season lines are irregular: players list gp=18, and team defenses
+    list gp=1 with stray tier flags (e.g. ``pts_allow_0``) instead of points
+    allowed. Games outside 10-17 are treated as a full season, and season-level
+    tier flags are dropped (tiers are re-derived from per-game points allowed).
     """
-    g = min(season_stats.get("gp") or GAMES_PER_SEASON, GAMES_PER_SEASON)
-    per_game = {k: v / g for k, v in season_stats.items() if k != "gp"}
+    gp = season_stats.get("gp") or GAMES_PER_SEASON
+    g = gp if 10 <= gp <= GAMES_PER_SEASON else GAMES_PER_SEASON
+    per_game = {k: v / g for k, v in season_stats.items() if k != "gp" and not _TIER_FLAG.match(k)}
     rate = score(per_game, settings, position)
     return rate if rate > 0 else None
 
@@ -120,7 +126,7 @@ class _Cutoff:
     later: list[tuple[float, float]]  # (sleeper proj, actual) for weeks c+1..c+H played
 
 
-def _cutoffs(
+def cutoffs(
     seasons: Mapping[tuple[int, str], PlayerSeason], priors: Mapping[tuple[int, str], float]
 ) -> list[_Cutoff]:
     out = []
@@ -173,15 +179,22 @@ def _fit_blend(cuts: list[_Cutoff]) -> tuple[float, float, float, float]:
 
 def _fit_rho(cuts: list[_Cutoff], talent: TalentModel, errors: ErrorModel) -> float | None:
     """Pooled correlation of latent residuals across future weeks of one cutoff."""
-    groups: list[np.ndarray] = []
+    keep, centres = [], []
     for c in cuts:
         if len(c.later) < 3:
             continue
-        rate = talent.rate(c.pos, c.prior, c.obs, c.n)
-        centre = talent.centre(c.pos, c.proj_next, rate)
-        if centre <= 0:
-            continue
-        groups.append(np.array([errors.to_latent(act, centre, c.pos) for _, act in c.later]))
+        centre = talent.centre(c.pos, c.proj_next, talent.rate(c.pos, c.prior, c.obs, c.n))
+        if centre > 0:
+            keep.append(c)
+            centres.append(centre)
+    acts = np.array([a for c in keep for _, a in c.later])
+    means = np.array([m for c, m in zip(keep, centres, strict=True) for _ in c.later])
+    pos = [c.pos for c in keep for _ in c.later]
+    z = errors.to_latent_many(acts, means, pos) if len(acts) else np.array([])
+    groups, start = [], 0
+    for c in keep:
+        groups.append(z[start : start + len(c.later)])
+        start += len(c.later)
     if len(groups) < 50:
         return None
     allz = np.concatenate(groups)
@@ -200,7 +213,7 @@ def fit_talent(
     errors: ErrorModel,
 ) -> tuple[TalentModel, dict[str, dict[str, float]]]:
     """Fit blend weights and persistence per position. Returns (model, diagnostics)."""
-    cuts = _cutoffs(seasons, priors)
+    cuts = cutoffs(seasons, priors)
     by_pos: dict[str, list[_Cutoff]] = defaultdict(list)
     for c in cuts:
         by_pos[c.pos].append(c)

@@ -81,3 +81,35 @@ def test_trade_reports_both_sides():
         cli.app, ["trade", "-l", LEAGUE_ID, "-m", "1", "--give", "nobody", "--get", "T2 WR4"]
     )
     assert bad.exit_code == 1 and "matches 0" in bad.output
+
+
+def test_backtest_command(monkeypatch):
+    from ffsim import backtest as B
+    from ffsim.model.models import ModelSet
+    from tests.test_backtest import small_league, synthetic_season
+
+    monkeypatch.setattr(cli.SeasonData, "load", classmethod(lambda cls, *a: synthetic_season()))
+    monkeypatch.setattr(cli, "fit_models", lambda *a, **k: (ModelSet.default(), {}))
+    monkeypatch.setattr(
+        cli,
+        "mock_replay",
+        lambda data, lg, rng, label: B.mock_replay(data, small_league(), rng, label),
+    )
+    res = runner.invoke(
+        cli.app,
+        [
+            "backtest",
+            "-l",
+            LEAGUE_ID,
+            "--seasons",
+            "2030",
+            "--leagues",
+            "2",
+            "--cutoffs",
+            "3,5",
+            "-n",
+            "300",
+        ],  # fmt: skip
+    )
+    assert res.exit_code == 0, res.output
+    assert "Backtest: P(playoffs)" in res.output and "Calibration of P(playoffs)" in res.output
