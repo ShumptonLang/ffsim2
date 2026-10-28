@@ -39,6 +39,8 @@ class SimInputs:
     actual_points: dict[int, np.ndarray] = field(default_factory=dict)  # scored playoff weeks
     # Injury designation for the first simulated week (only when it is the current NFL week).
     statuses: dict[str, str] = field(default_factory=dict)
+    # Injured player -> (week he could return, games missed): out until availability says
+    returning: dict[str, tuple[int, int]] = field(default_factory=dict)
     sleeper_means: dict[int, dict[str, float]] = field(default_factory=dict)  # before blending
     rates: dict[str, float] = field(default_factory=dict)  # Bayesian per-game rate
     # week -> player_id -> (NFL team, opponent) / correlation role
@@ -118,23 +120,40 @@ def week_means(
     source: ProjectionSource,
     state: LeagueState,
     weeks: list[int],
-) -> tuple[dict[int, dict[str, float]], dict[int, dict[str, tuple[str, str]]]]:
+) -> tuple[
+    dict[int, dict[str, float]],
+    dict[int, dict[str, tuple[str, str]]],
+    dict[str, tuple[int, int]],
+]:
     """Projected points per player for each week, scored with league settings.
 
-    Also returns each projected player's (NFL team, opponent) per week. A week
-    with no projections at all (not published yet) reuses the most recent
-    week's points but has no game info; a player missing from a published week
-    is on bye or out.
+    Also returns each projected player's (NFL team, opponent) per week. A
+    player missing or projected 0 in a published week is on bye or out. A week
+    with no projections at all (not published yet) has no game info and reuses
+    each player's latest projection from a week his team played, so a bye in
+    the last published week does not carry forward as a zero.
+
+    An injured player (one with an injury designation) projected 0 in the last
+    published week gets his latest healthy projection instead, and is returned
+    in the third value as ``pid -> (first unpublished week, games missed)`` so
+    the availability model can decide when he comes back.
     """
     settings = state.league.scoring_settings
     out: dict[int, dict[str, float]] = {}
     games: dict[int, dict[str, tuple[str, str]]] = {}
+    returning: dict[str, tuple[int, int]] = {}
     last: dict[str, float] = {}
+    healthy: dict[str, float] = {}  # latest projection > 0 in a week his team played
+    missed: dict[str, int] = {}  # trailing published games projected 0 (byes skipped)
     for w in weeks:
         proj = source.weekly_projections(state.league.season, w)
         games[w] = {}
         if not proj:
-            out[w] = dict(last)
+            if not returning:
+                for pid, k in missed.items():
+                    if pid in healthy and state.player(pid).injury_status:
+                        returning[pid] = (w, k)
+            out[w] = last | {p: healthy[p] for p in returning}
             continue
         m = {}
         for pid, pw in proj.items():
@@ -142,8 +161,22 @@ def week_means(
             m[pid] = max(0.0, score(pw.stats, settings, pos)) if pw.stats.get("gp", 1) > 0 else 0.0
             if pw.team and pw.opponent:
                 games[w][pid] = (pw.team, pw.opponent)
-        out[w] = last = m
-    return out, games
+        # Sleeper lists bye players with their team but no game; keep their old value
+        playing = {t for g in games[w].values() for t in g}
+        bye = {p for p, pw in proj.items() if playing and pw.team and pw.team not in playing}
+        last = {p: v for p, v in last.items() if p in bye} | {
+            p: v for p, v in m.items() if p not in bye
+        }
+        for pid, v in m.items():
+            if pid in bye:
+                continue
+            if v > 0:
+                healthy[pid] = v
+                missed.pop(pid, None)
+            else:
+                missed[pid] = missed.get(pid, 0) + 1
+        out[w] = m
+    return out, games, returning
 
 
 def player_rates(
@@ -213,7 +246,7 @@ def build_inputs(
 
     rosters = {t.roster_id: list(t.active_players) for t in teams}
     rostered = {p for ps in rosters.values() for p in ps}
-    sleeper, games = week_means(source, state, weeks) if weeks else ({}, {})
+    sleeper, games, returning = week_means(source, state, weeks) if weeks else ({}, {}, {})
     roles = {
         w: assign_roles(
             (p, t[0], state.player(p).primary_position, sleeper[w].get(p, 0.0))
@@ -263,6 +296,7 @@ def build_inputs(
             for w, pts in state.playoff_points.items()
         },
         statuses=statuses,
+        returning={p: r for p, r in returning.items() if p in universe},
         sleeper_means=sleeper,
         nfl_games={w: {p: g for p, g in wg.items() if p in universe} for w, wg in games.items()},
         roles={w: {p: r for p, r in wr.items() if p in universe} for w, wr in roles.items()},

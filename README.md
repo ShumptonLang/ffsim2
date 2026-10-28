@@ -36,9 +36,9 @@ for the full design.
 Held-out checks on 2023–2025 (each season scored by models fitted on the other two):
 
 - **Outcome distributions:** for startable players, actual scores land below the
-  model's 10th / 50th / 90th percentiles 8–11% / 47–51% / 89–91% of the time with
-  the bootstrap family. It beats the parametric family on CRPS at every position,
-  so `ffsim calibrate --apply` and the shipped defaults use it.
+  model's 10th / 50th / 90th percentiles 8–11% / 46–50% / 87–91% of the time. The
+  tables are empirical (bootstrap) quantiles; a parametric lognormal/gamma family
+  scored worse on CRPS at every position and was removed.
 - **Within-game correlation:** observed vs. model on held-out seasons: QB–WR1
   +0.27 / +0.27, QB–TE1 +0.18 / +0.17, RB1–RB2 −0.07 / −0.05, DEF vs. opposing
   QB −0.41 / −0.39.
@@ -93,7 +93,7 @@ ffsim find-trades -l <LEAGUE_ID> -m <manager> [--max-size 2] [--with <team>]
 Model checks:
 
 ```bash
-ffsim calibrate -l <LEAGUE_ID> [--apply]          # held-out checks; --apply saves the best family per position
+ffsim calibrate -l <LEAGUE_ID> [--apply]          # held-out checks; --apply saves models refitted on those seasons
 ffsim backtest  -l <LEAGUE_ID> [--leagues 10] [--cutoffs 3,6,9,12] [--replay <old_league_id> ...]
 ```
 

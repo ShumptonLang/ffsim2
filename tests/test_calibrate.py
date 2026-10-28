@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from ffsim.calibrate import CalibrationReport, DistScore, score_distributions
+from ffsim.calibrate import DistScore, score_distributions
 from ffsim.data.history import HistoryRow
 from ffsim.model.models import ModelSet
 
@@ -41,19 +41,9 @@ def test_unplayed_and_unstartable_rows_skipped():
     assert score_distributions(model, rows, {"x": 1.0}) == {}
 
 
-def test_merge_and_choose_families():
+def test_merge():
     a = DistScore(100, 4.0, np.array([0.1, 0.5, 0.9]))
     b = DistScore(300, 2.0, np.array([0.2, 0.6, 1.0]))
     m = a.merge(b)
     assert m.n == 400 and m.crps == pytest.approx(2.5)
     assert m.below == pytest.approx([0.175, 0.575, 0.975])
-    rep = CalibrationReport(
-        [2030],
-        {
-            "parametric": {"WR": DistScore(1, 3.0), "QB": DistScore(1, 4.0)},
-            "bootstrap": {"WR": DistScore(1, 3.1), "QB": DistScore(1, 3.9)},
-        },  # fmt: skip
-        {},
-        [],
-    )
-    assert rep.choose_families() == {"QB": "bootstrap", "WR": "parametric"}

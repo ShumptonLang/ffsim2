@@ -182,7 +182,7 @@ def _pct(p: float) -> str:
 
 
 def error_model_table(model: ErrorModel, cov: dict[str, dict[str, float]]) -> Table:
-    t = Table(title=f"Projection-error model ({model.family})")
+    t = Table(title="Projection-error model")
     for col in ("Pos", "Bucket", "n", "Center", "Bias", "Below p10", "p50", "p90"):
         t.add_column(col, justify="left" if col in {"Pos", "Bucket"} else "right")
     for pos, pm in model.positions.items():
@@ -358,24 +358,17 @@ def _player_label(state: LeagueState, pid: str) -> str:
 def calibration_tables(rep: CalibrationReport) -> list[Table]:
     seasons = ", ".join(str(x) for x in rep.seasons)
     dist = Table(title=f"Outcome distributions, held out one season at a time ({seasons})")
-    for col in ("Pos", "n", "Family", "CRPS", "Below p10", "p50", "p90", "Best"):
-        dist.add_column(col, justify="left" if col in {"Pos", "Family", "Best"} else "right")
-    choice = rep.choose_families()
-    for pos in sorted(choice):
-        for k, (fam, d) in enumerate(sorted(rep.dist.items())):
-            if pos not in d:
-                continue
-            sc = d[pos]
-            dist.add_row(
-                pos if k == 0 else "",
-                f"{sc.n:,}" if k == 0 else "",
-                fam,
-                f"{sc.crps:.3f}",
-                _pct(sc.below[0]),
-                _pct(sc.below[1]),
-                _pct(sc.below[2]),
-                "✓" if choice[pos] == fam else "",
-            )
+    for col in ("Pos", "n", "CRPS", "Below p10", "p50", "p90"):
+        dist.add_column(col, justify="left" if col == "Pos" else "right")
+    for pos, sc in sorted(rep.dist.items()):
+        dist.add_row(
+            pos,
+            f"{sc.n:,}",
+            f"{sc.crps:.3f}",
+            _pct(sc.below[0]),
+            _pct(sc.below[1]),
+            _pct(sc.below[2]),
+        )
     blend = Table(title="Bayesian blend: next-week squared error, held out")
     for col in ("Pos", "n", "Sleeper only", "Blended", "Change"):
         blend.add_column(col, justify="left" if col == "Pos" else "right")

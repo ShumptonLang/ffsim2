@@ -69,9 +69,8 @@ def _synthetic_rows(n=4000, seed=0):
     return rows
 
 
-@pytest.mark.parametrize("family", ["parametric", "bootstrap"])
-def test_fit_recovers_synthetic_spread(family):
-    m = fit_error_model(_synthetic_rows(), SETTINGS, family)
+def test_fit_recovers_synthetic_spread():
+    m = fit_error_model(_synthetic_rows(), SETTINGS)
     assert set(m.positions) == {"WR", "K"}
     wr = m.positions["WR"]
     assert len(wr.centers) == 4 and wr.centers == sorted(wr.centers)
@@ -103,8 +102,3 @@ def test_to_latent_inverts_sample(model, pos, mean):
 def test_to_latent_flat_region_midpoint(model):
     # a dud score sits in the flat dud mass; its latent value is well below 0
     assert model.to_latent(0.0, 12.0, "RB") < -1.0
-
-
-def test_bad_family():
-    with pytest.raises(ValueError):
-        fit_error_model([], SETTINGS, "normal")

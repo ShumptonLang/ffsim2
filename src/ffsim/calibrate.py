@@ -3,7 +3,7 @@
 For each held-out season the models are fitted on the other seasons and scored
 on the held-out one:
 
-* outcome distributions, per position and family: share of actual scores
+* outcome distributions, per position: share of actual scores
   below the 10th/50th/90th percentiles (should be ~10/50/90%) and CRPS (lower
   is better; it rewards both calibration and sharpness);
 * Bayesian blend: next-week squared error of Sleeper's projection alone vs. the
@@ -11,8 +11,7 @@ on the held-out one:
 * correlation: observed role-pair correlations in the held-out season vs. the
   model's.
 
-``choose_families`` picks, per position, the family with the lower held-out
-CRPS, and ``calibrated_models`` refits on all seasons using those choices.
+``calibrated_models`` refits on all the checked seasons.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from ffsim.model.bayes import (
     prior_rate,
 )
 from ffsim.model.correlation import ROLE_SLOTS, fit_loadings, pair_correlations
-from ffsim.model.errors import FAMILIES, ErrorModel, fit_error_model
+from ffsim.model.errors import ErrorModel, fit_error_model
 from ffsim.model.models import ModelSet, fit_models
 
 U_LEVELS = np.linspace(0.01, 0.99, 99)
@@ -116,41 +115,29 @@ def blend_mse(talent: TalentModel, cuts: list) -> dict[str, tuple[int, float, fl
 @dataclass
 class CalibrationReport:
     seasons: list[int]
-    dist: dict[str, dict[str, DistScore]]  # family -> pos -> score
+    dist: dict[str, DistScore]  # pos -> score
     blend: dict[str, tuple[int, float, float]]
     corr: list[tuple[str, str, bool, float, float, int]]  # a, b, same, observed, model, n
-
-    def choose_families(self) -> dict[str, str]:
-        positions = set().union(*(d.keys() for d in self.dist.values()))
-        out = {}
-        for pos in sorted(positions):
-            scores = {f: d[pos].crps for f, d in self.dist.items() if pos in d}
-            out[pos] = min(scores, key=scores.__getitem__)
-        return out
 
 
 def leave_one_season_out(
     store: HistoryStore,
     seasons: Sequence[int],
     settings: Mapping[str, float],
-    families: Sequence[str] = FAMILIES,
 ) -> CalibrationReport:
     rows_by = {s: list(store.rows([s])) for s in seasons}
     priors = _priors(store, seasons, settings)
-    dist: dict[str, dict[str, DistScore]] = {f: {} for f in families}
+    dist: dict[str, DistScore] = {}
     blend: dict[str, list[tuple[int, float, float]]] = defaultdict(list)
     corr_acc: dict[tuple[str, str, bool], list[tuple[float, float, int]]] = defaultdict(list)
 
     for held in seasons:
         train = [r for s in seasons if s != held for r in rows_by[s]]
         test = rows_by[held]
-        fitted = {}
-        for fam in families:
-            fitted[fam] = fit_error_model(train, settings, fam)
-            for pos, sc in score_distributions(fitted[fam], test, settings).items():
-                dist[fam][pos] = dist[fam].get(pos, DistScore()).merge(sc)
+        errors = fit_error_model(train, settings)
+        for pos, sc in score_distributions(errors, test, settings).items():
+            dist[pos] = dist.get(pos, DistScore()).merge(sc)
 
-        errors = fitted[families[0]]
         train_seasons, _ = player_seasons(train, settings)
         test_seasons, _ = player_seasons(test, settings)
         talent, _ = fit_talent(train_seasons, priors, errors)
@@ -189,19 +176,8 @@ def calibrated_models(
     store: HistoryStore,
     seasons: Sequence[int],
     settings: Mapping[str, float],
-    choice: Mapping[str, str],
 ) -> ModelSet:
-    """Fit on all seasons, using the chosen error-model family per position."""
-    models, _ = fit_models(store, seasons, settings, "parametric")
-    alt = {f for f in choice.values() if f != "parametric"}
-    if alt:
-        rows = list(store.rows(seasons))
-        for fam in alt:
-            other = fit_error_model(rows, settings, fam)
-            for pos, f in choice.items():
-                if f == fam and pos in other.positions:
-                    models.errors.positions[pos] = other.positions[pos]
-        models.errors.family = "parametric"  # the default slot `ffsim odds` loads
-    models.meta["error_families"] = dict(choice)
+    """Fit on all seasons."""
+    models, _ = fit_models(store, seasons, settings)
     models.meta["calibrated"] = True
     return models

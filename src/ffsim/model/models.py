@@ -62,34 +62,28 @@ class ModelSet:
         return cls.from_json(resources.files("ffsim.model").joinpath(DEFAULT_FILE).read_text())
 
 
-def models_path(cache_dir: Path, settings: Mapping[str, float], family: str) -> Path:
+def models_path(cache_dir: Path, settings: Mapping[str, float]) -> Path:
     key = json.dumps(sorted((k, float(v)) for k, v in settings.items() if v))
-    digest = hashlib.sha256(f"{family}|{key}".encode()).hexdigest()[:16]
-    return cache_dir / "models" / f"{family}_{digest}.json"
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return cache_dir / "models" / f"{digest}.json"
 
 
-def load_models(
-    cache_dir: Path, settings: Mapping[str, float], family: str = "parametric"
-) -> tuple[ModelSet, bool]:
+def load_models(cache_dir: Path, settings: Mapping[str, float]) -> tuple[ModelSet, bool]:
     """League-fitted models if ``ffsim fit`` has been run, else the defaults."""
-    path = models_path(cache_dir, settings, family)
+    path = models_path(cache_dir, settings)
     if path.exists():
         return ModelSet.load(path), True
-    default = ModelSet.default()
-    if family != default.errors.family:
-        raise ValueError(f"no fitted '{family}' models for this scoring; run `ffsim fit`")
-    return default, False
+    return ModelSet.default(), False
 
 
 def fit_models(
     store: HistoryStore,
     seasons: Iterable[int],
     settings: Mapping[str, float],
-    family: str = "parametric",
 ) -> tuple[ModelSet, dict[str, object]]:
     seasons = list(seasons)
     rows = list(store.rows(seasons))
-    errors = fit_error_model(rows, settings, family)
+    errors = fit_error_model(rows, settings)
     by_player, team_weeks = player_seasons(rows, settings)
     priors: dict[tuple[int, str], float] = {}
     for season in seasons:
@@ -100,7 +94,7 @@ def fit_models(
     talent, talent_diag = fit_talent(by_player, priors, errors)
     availability, avail_diag = fit_availability(by_player, team_weeks)
     correlation, corr_diag = fit_correlation(rows, settings, errors, talent.rho)
-    meta: dict[str, object] = {"seasons": seasons, "family": family}
+    meta: dict[str, object] = {"seasons": seasons}
     return ModelSet(errors, talent, availability, correlation, meta), {
         "talent": talent_diag,
         "availability": avail_diag,

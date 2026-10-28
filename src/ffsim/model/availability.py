@@ -4,6 +4,10 @@ Sleeper's weekly projections already encode *known* absences (byes, players
 ruled out, IR return timelines) as zero projections. This model adds what they
 don't:
 
+* when a player who is out in the last published week returns: weeks with no
+  projections yet carry his healthy projection, and his remaining absence is
+  drawn from the duration distribution given the games he has already missed;
+
 * this week's designation risk: a Questionable player plays with probability
   ~0.75 (configurable; Sleeper projects them at full value);
 * new injuries in future weeks: each week a player who plays may get hurt and
@@ -75,12 +79,17 @@ class AvailabilityModel:
         active: np.ndarray,
         hazards: np.ndarray,
         first_week_play: np.ndarray,
+        resume_at: np.ndarray | None = None,
+        missed: np.ndarray | None = None,
     ) -> np.ndarray:
         """Availability (n_sims, W, P) as booleans.
 
         ``active`` (W, P): the player's team plays and his projection is > 0.
         ``hazards`` (P,): weekly injury hazard. ``first_week_play`` (P,): chance
-        he plays the first simulated week given his designation.
+        he plays the first simulated week given his designation. ``resume_at``
+        (P,): week index from which an already-injured player is projected
+        again (-1 if none), having missed ``missed`` (P,) games; his remaining
+        absence is drawn from the duration distribution given that.
         """
         W, P = active.shape
         avail = np.zeros((n_sims, W, P), dtype=bool)
@@ -92,12 +101,15 @@ class AvailabilityModel:
         remaining = np.zeros((n_sims, P), dtype=np.int32)
         for w in range(W):
             plays_team = np.broadcast_to(active[w], (n_sims, P))
+            if resume_at is not None and missed is not None:
+                cols = np.flatnonzero(resume_at == w)
+                if cols.size:
+                    remaining[:, cols] = self._remaining(rng, n_sims, missed[cols], pmf, values)
+            out = (remaining > 0) & plays_team
+            remaining = remaining - out
+            ok = ~out
             if w == 0:
-                ok = rng.random((n_sims, P)) < first_week_play
-            else:
-                out = (remaining > 0) & plays_team
-                remaining = remaining - out
-                ok = ~out
+                ok &= rng.random((n_sims, P)) < first_week_play
             avail[:, w, :] = ok & plays_team
             if w < W - 1:
                 hurt = avail[:, w, :] & (remaining == 0) & (rng.random((n_sims, P)) < hazards)
@@ -105,6 +117,25 @@ class AvailabilityModel:
                     d = values[rng.choice(len(values), size=int(hurt.sum()), p=pmf)]
                     remaining[hurt] = d
         return avail
+
+    @staticmethod
+    def _remaining(
+        rng: np.random.Generator,
+        n_sims: int,
+        missed: np.ndarray,
+        pmf: np.ndarray,
+        values: np.ndarray,
+    ) -> np.ndarray:
+        """Games still to miss (n_sims, Q), given ``missed`` (Q,) games already."""
+        out = np.empty((n_sims, len(missed)), dtype=np.int32)
+        for k in np.unique(missed):
+            cols = np.flatnonzero(missed == k)
+            p = np.where(values >= k, pmf, 0.0)
+            if p.sum() == 0:
+                p = (values == SEASON_ENDING).astype(np.float64)
+            d = values[rng.choice(len(values), size=(n_sims, len(cols)), p=p / p.sum())]
+            out[:, cols] = d - k
+        return out
 
     def to_dict(self) -> dict:
         return {
