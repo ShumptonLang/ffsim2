@@ -121,10 +121,11 @@ def week_means(
 ) -> tuple[dict[int, dict[str, float]], dict[int, dict[str, tuple[str, str]]]]:
     """Projected points per player for each week, scored with league settings.
 
-    Also returns each projected player's (NFL team, opponent) per week. A week
-    with no projections at all (not published yet) reuses the most recent
-    week's points but has no game info; a player missing from a published week
-    is on bye or out.
+    Also returns each projected player's (NFL team, opponent) per week. A
+    player missing or projected 0 in a published week is on bye or out. A week
+    with no projections at all (not published yet) has no game info and reuses
+    each player's latest projection from a week his team played, so a bye in
+    the last published week does not carry forward as a zero.
     """
     settings = state.league.scoring_settings
     out: dict[int, dict[str, float]] = {}
@@ -142,7 +143,13 @@ def week_means(
             m[pid] = max(0.0, score(pw.stats, settings, pos)) if pw.stats.get("gp", 1) > 0 else 0.0
             if pw.team and pw.opponent:
                 games[w][pid] = (pw.team, pw.opponent)
-        out[w] = last = m
+        # Sleeper lists bye players with their team but no game; keep their old value
+        playing = {t for g in games[w].values() for t in g}
+        bye = {p for p, pw in proj.items() if playing and pw.team and pw.team not in playing}
+        last = {p: v for p, v in last.items() if p in bye} | {
+            p: v for p, v in m.items() if p not in bye
+        }
+        out[w] = m
     return out, games
 
 

@@ -175,3 +175,28 @@ def test_fixture_roles_and_games(client, model):
     assert inp.nfl_games[4] == {}  # unpublished week: no game info -> independent
     res = simulate(inp, model, n_sims=1_000, seed=0)
     assert res.champion.sum() == pytest.approx(1.0)
+
+
+def test_bye_in_last_published_week_does_not_carry_forward():
+    from types import SimpleNamespace
+
+    from ffsim.data.projections import PlayerWeek
+    from ffsim.sim.inputs import week_means
+
+    def pw(pid, week, rec, team, opp):
+        return PlayerWeek(pid, 2025, week, {"rec": rec} if rec else {}, team, opp)
+
+    # Sleeper lists bye players with their team, no opponent and no stats
+    published = {
+        6: {"a": pw("a", 6, 10, "BAL", "LAR"), "b": pw("b", 6, 8, "LAR", "BAL")},
+        7: {"a": pw("a", 7, 0, "BAL", None), "b": pw("b", 7, 0, "LAR", "SF")},
+    }
+    source = SimpleNamespace(weekly_projections=lambda season, w: published.get(w, {}))
+    state = SimpleNamespace(
+        league=SimpleNamespace(season=2025, scoring_settings={"rec": 1.0}),
+        player=lambda pid: SimpleNamespace(primary_position="WR"),
+    )
+    means, games = week_means(source, state, [6, 7, 8])
+    assert means[7] == {"a": 0.0, "b": 0.0}  # a on bye, b out with his team playing
+    assert means[8] == {"a": 10.0, "b": 0.0}  # a's bye stays in week 7
+    assert games[8] == {}
