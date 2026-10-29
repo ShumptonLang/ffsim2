@@ -105,6 +105,151 @@ def _team_scores(pts: np.ndarray, avail: np.ndarray, plans: list[list[list[int]]
     return out
 
 
+@dataclass
+class DrawSetup:
+    """Per-player inputs to the outcome draws, computed once per universe."""
+
+    means: np.ndarray  # (W, P) projected points
+    positions: list[str | None]
+    rho: np.ndarray  # (P,) talent persistence
+    hazard: np.ndarray  # (P,) weekly injury hazard
+    first_play: np.ndarray  # (P,) chance of playing the first simulated week
+    layouts: list  # per week, factor-copula layout
+    active: np.ndarray  # (W, P) team plays and projection > 0
+
+    @classmethod
+    def build(cls, inputs: SimInputs, models: ModelSet, players: list[str]) -> DrawSetup:
+        W, P = len(inputs.weeks), len(players)
+        positions = [(inputs.positions.get(p) or (None,))[0] for p in players]
+        means = np.array(
+            [[inputs.means.get(w, {}).get(p, 0.0) for p in players] for w in inputs.weeks],
+            dtype=np.float64,
+        ).reshape(W, P)
+        layouts = [
+            week_layout(models.correlation, players, inputs.nfl_games.get(w, {}),
+                        inputs.roles.get(w, {}))
+            for w in inputs.weeks
+        ]  # fmt: skip
+        return cls(
+            means=means,
+            positions=positions,
+            rho=np.array([models.talent.rho_for(pos) for pos in positions], dtype=np.float32),
+            hazard=np.array([models.availability.hazard_for(pos) for pos in positions]),
+            first_play=np.array(
+                [models.availability.play_prob(inputs.statuses.get(p)) for p in players]
+            ),
+            layouts=layouts,
+            active=means > 0,
+        )
+
+
+@dataclass
+class DrawBatch:
+    pts: np.ndarray  # (B, W, P) fantasy points
+    avail: np.ndarray  # (B, W, P) plays that week
+    z: np.ndarray | None = None  # (B, W, P) latent normals, if kept
+    absence: np.ndarray | None = None  # (B, W, P) games missed in current absence, if kept
+
+
+def draw_batch(
+    setup: DrawSetup,
+    models: ModelSet,
+    rng: np.random.Generator,
+    n: int,
+    log_reveal: np.ndarray | None = None,
+    keep_state: bool = False,
+) -> DrawBatch:
+    """Draw ``n`` seasons of outcomes for every player in the universe.
+
+    ``log_reveal`` (n, W, P), if given, scales each player-week's projection by
+    ``exp(log_reveal)`` before drawing points (projection news not yet known
+    when the simulation starts). ``keep_state`` also returns the latent normals
+    and the injury-absence state that in-simulation managers can observe.
+    """
+    W, P = setup.means.shape
+    talent = rng.standard_normal((n, 1, P), dtype=np.float32)
+    weekly = np.zeros((n, W, P), dtype=np.float32)
+    for wi, lay in enumerate(setup.layouts):
+        weekly[:, wi] = sample_weekly(rng, n, lay)
+    z = np.sqrt(setup.rho) * talent + np.sqrt(1 - setup.rho) * weekly
+    means = setup.means[None, :, :]
+    if log_reveal is not None:
+        means = means * np.exp(log_reveal)
+    pts = models.errors.sample(z, means, setup.positions)
+    if keep_state:
+        avail, absence = models.availability.sample_with_state(
+            rng, n, setup.active, setup.hazard, setup.first_play
+        )
+        return DrawBatch(pts, avail, z, absence)
+    avail = models.availability.sample(rng, n, setup.active, setup.hazard, setup.first_play)
+    return DrawBatch(pts, avail)
+
+
+def season_outcomes(inp: SimInputs, week_idx: Mapping[int, int], team_pts: np.ndarray) -> Outcomes:
+    """Standings, seeds and playoff results from team points (S, W, T)."""
+    po = inp.playoffs
+    S, _, T = team_pts.shape
+    half_wins = np.broadcast_to(inp.base_half_wins.astype(float), (S, T)).copy()
+    pf = np.broadcast_to(inp.base_points_for.astype(float), (S, T)).copy()
+    week_won: dict[int, np.ndarray] = {}
+    for w in inp.regular_weeks:
+        s = team_pts[:, week_idx[w], :]
+        pf += s
+        won = np.zeros((S, T))
+        for a, b in inp.matchups.get(w, []):
+            won[:, a] = 2 * (s[:, a] > s[:, b]) + (s[:, a] == s[:, b])
+            won[:, b] = 2 * (s[:, b] > s[:, a]) + (s[:, a] == s[:, b])
+        head_to_head = won.copy()
+        if inp.median_match:
+            med = np.median(s, axis=1, keepdims=True)
+            won += 2 * (s > med) + (s == med)
+        half_wins += won
+        week_won[w] = head_to_head == 2
+    seeds = seed_teams(half_wins, pf, inp.divisions)
+    if po.teams > 1:
+        round_scores = []
+        for rw in po.round_weeks():
+            sc = np.zeros((S, T))
+            for w in rw:
+                if w in week_idx:
+                    sc += team_pts[:, week_idx[w], :]
+                elif w in inp.actual_points:
+                    sc += inp.actual_points[w]
+            round_scores.append(sc)
+        finalists, champion = play_bracket(seeds, round_scores, po, inp.forced_playoff_winners)
+    else:
+        finalists = np.stack([seeds[:, 0], seeds[:, 0]], axis=1)
+        champion = seeds[:, 0]
+    return Outcomes(team_pts, half_wins, seeds, finalists, champion, week_won)
+
+
+def summarize(inp: SimInputs, week_idx: Mapping[int, int], out: Outcomes) -> SimResult:
+    """Probabilities and averages across simulations for one scenario."""
+    po = inp.playoffs
+    S, T = out.n, inp.n_teams
+    made = out.made_playoffs(po.teams)
+    bye = out.made_playoffs(po.byes) if po.byes else np.zeros((S, T), dtype=bool)
+    seed_probs = np.zeros((T, max(po.teams, 1)))
+    for k in range(min(po.teams, T)):
+        seed_probs[:, k] = np.bincount(out.seeds[:, k], minlength=T) / S
+    final = np.zeros(T)
+    if po.teams > 1:
+        final = np.bincount(out.finalists.ravel(), minlength=T) / S
+    return SimResult(
+        team_ids=list(inp.team_ids),
+        team_labels=list(inp.team_labels),
+        n_sims=S,
+        playoffs=made.mean(0),
+        bye=bye.mean(0),
+        final=final,
+        champion=np.bincount(out.champion, minlength=T) / S,
+        seed_probs=seed_probs,
+        mean_wins=(out.half_wins / 2).mean(0),
+        week_win={w: v.mean(0) for w, v in out.week_won.items()},
+        week_points={w: out.team_pts[:, wi].mean(0) for w, wi in week_idx.items()},
+    )
+
+
 class Evaluator:
     def __init__(
         self,
@@ -130,37 +275,17 @@ class Evaluator:
     def _draw(
         self, n_sims: int, seed: int | None, batch_size: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        inp, models = self.inputs, self.models
-        W, P = len(inp.weeks), len(self.players)
-        positions = [(inp.positions.get(p) or (None,))[0] for p in self.players]
-        means = np.array(
-            [[inp.means.get(w, {}).get(p, 0.0) for p in self.players] for w in inp.weeks],
-            dtype=np.float64,
-        ).reshape(W, P)
-        rho = np.array([models.talent.rho_for(pos) for pos in positions], dtype=np.float32)
-        hazard = np.array([models.availability.hazard_for(pos) for pos in positions])
-        first_play = np.array(
-            [models.availability.play_prob(inp.statuses.get(p)) for p in self.players]
-        )
-        layouts = [
-            week_layout(models.correlation, self.players, inp.nfl_games.get(w, {}),
-                        inp.roles.get(w, {}))
-            for w in inp.weeks
-        ]  # fmt: skip
-        active = means > 0
+        setup = DrawSetup.build(self.inputs, self.models, self.players)
+        W, P = setup.means.shape
         pts = np.zeros((n_sims, W, P), dtype=np.float32)
         avail = np.zeros((n_sims, W, P), dtype=bool)
         rng = np.random.default_rng(seed)
         for start in range(0, n_sims, batch_size):
             B = min(batch_size, n_sims - start)
-            talent = rng.standard_normal((B, 1, P), dtype=np.float32)
-            weekly = np.zeros((B, W, P), dtype=np.float32)
-            for wi, lay in enumerate(layouts):
-                weekly[:, wi] = sample_weekly(rng, B, lay)
-            z = np.sqrt(rho) * talent + np.sqrt(1 - rho) * weekly
+            batch = draw_batch(setup, self.models, rng, B)
             sl = slice(start, start + B)
-            pts[sl] = models.errors.sample(z, means[None, :, :], positions)
-            avail[sl] = models.availability.sample(rng, B, active, hazard, first_play)
+            pts[sl] = batch.pts
+            avail[sl] = batch.avail
         return pts, avail
 
     # -- scoring -------------------------------------------------------------------
@@ -226,41 +351,7 @@ class Evaluator:
     # -- season & playoffs -----------------------------------------------------------
 
     def outcomes(self, team_pts: np.ndarray) -> Outcomes:
-        inp = self.inputs
-        po = inp.playoffs
-        S, _, T = team_pts.shape
-        half_wins = np.broadcast_to(inp.base_half_wins.astype(float), (S, T)).copy()
-        pf = np.broadcast_to(inp.base_points_for.astype(float), (S, T)).copy()
-        week_won: dict[int, np.ndarray] = {}
-        for w in inp.regular_weeks:
-            s = team_pts[:, self.week_idx[w], :]
-            pf += s
-            won = np.zeros((S, T))
-            for a, b in inp.matchups.get(w, []):
-                won[:, a] = 2 * (s[:, a] > s[:, b]) + (s[:, a] == s[:, b])
-                won[:, b] = 2 * (s[:, b] > s[:, a]) + (s[:, a] == s[:, b])
-            head_to_head = won.copy()
-            if inp.median_match:
-                med = np.median(s, axis=1, keepdims=True)
-                won += 2 * (s > med) + (s == med)
-            half_wins += won
-            week_won[w] = head_to_head == 2
-        seeds = seed_teams(half_wins, pf, inp.divisions)
-        if po.teams > 1:
-            round_scores = []
-            for rw in po.round_weeks():
-                sc = np.zeros((S, T))
-                for w in rw:
-                    if w in self.week_idx:
-                        sc += team_pts[:, self.week_idx[w], :]
-                    elif w in inp.actual_points:
-                        sc += inp.actual_points[w]
-                round_scores.append(sc)
-            finalists, champion = play_bracket(seeds, round_scores, po, inp.forced_playoff_winners)
-        else:
-            finalists = np.stack([seeds[:, 0], seeds[:, 0]], axis=1)
-            champion = seeds[:, 0]
-        return Outcomes(team_pts, half_wins, seeds, finalists, champion, week_won)
+        return season_outcomes(self.inputs, self.week_idx, team_pts)
 
     def run(
         self,
@@ -281,30 +372,7 @@ class Evaluator:
     # -- summaries -----------------------------------------------------------------
 
     def summary(self, out: Outcomes) -> SimResult:
-        inp = self.inputs
-        po = inp.playoffs
-        S, T = out.n, inp.n_teams
-        made = out.made_playoffs(po.teams)
-        bye = out.made_playoffs(po.byes) if po.byes else np.zeros((S, T), dtype=bool)
-        seed_probs = np.zeros((T, max(po.teams, 1)))
-        for k in range(min(po.teams, T)):
-            seed_probs[:, k] = np.bincount(out.seeds[:, k], minlength=T) / S
-        final = np.zeros(T)
-        if po.teams > 1:
-            final = np.bincount(out.finalists.ravel(), minlength=T) / S
-        return SimResult(
-            team_ids=list(inp.team_ids),
-            team_labels=list(inp.team_labels),
-            n_sims=S,
-            playoffs=made.mean(0),
-            bye=bye.mean(0),
-            final=final,
-            champion=np.bincount(out.champion, minlength=T) / S,
-            seed_probs=seed_probs,
-            mean_wins=(out.half_wins / 2).mean(0),
-            week_win={w: v.mean(0) for w, v in out.week_won.items()},
-            week_points={w: out.team_pts[:, wi].mean(0) for w, wi in self.week_idx.items()},
-        )
+        return summarize(self.inputs, self.week_idx, out)
 
 
 def simulate(

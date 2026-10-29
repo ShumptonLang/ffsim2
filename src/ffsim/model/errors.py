@@ -47,6 +47,11 @@ _W = stats.norm.pdf(Z_GRID) * _DZ
 _W[[0, -1]] *= 0.5
 _W /= _W.sum()
 U_GRID = special.ndtr(Z_GRID)
+# Grids for expected outcomes under a shifted/scaled latent normal (beliefs).
+SHIFT_GRID = np.linspace(-3.0, 3.0, 121)
+SCALE_GRID = np.linspace(0.3, 1.0, 15)
+_DS = SHIFT_GRID[1] - SHIFT_GRID[0]
+_DC = SCALE_GRID[1] - SCALE_GRID[0]
 
 DUD_RATIO = 0.15  # ratio below which a game counts as a "dud" (early exit, no role)
 MIN_RATIO_PROJ = 1.0  # ratio positions: ignore history rows projected below this
@@ -64,6 +69,52 @@ class PositionModel:
     def __post_init__(self) -> None:
         self._centers = np.asarray(self.centers, dtype=np.float64)
         self._tables = np.asarray(self.tables, dtype=np.float64)
+        self._shifted: np.ndarray | None = None
+        self._runs: tuple[np.ndarray, np.ndarray] | None = None
+
+    def shifted_means(self) -> np.ndarray:
+        """E[table(shift + scale * Z)] per bucket on (SHIFT_GRID, SCALE_GRID).
+
+        Used for beliefs: when a manager's posterior on a player's latent value
+        is N(shift, scale^2), his expected outcome is projection x this (ratio)
+        or projection + this (additive).
+        """
+        if self._shifted is None:
+            # Same quadrature the tables were normalized with, so (0, 1) gives 1 / 0.
+            nodes, weights = Z_GRID, _W
+            z = SHIFT_GRID[:, None, None] + SCALE_GRID[None, :, None] * nodes[None, None, :]
+            out = np.empty((len(self._tables), len(SHIFT_GRID), len(SCALE_GRID)))
+            for b, t in enumerate(self._tables):
+                out[b] = np.interp(z, Z_GRID, t) @ weights
+            self._shifted = out
+        return self._shifted
+
+    def flat_runs(self) -> tuple[np.ndarray, np.ndarray]:
+        """Per bucket and grid interval, the grid extent of the flat stretch it lies in.
+
+        (-1, -1) where the quantile function is strictly increasing. A score in a
+        flat stretch (e.g. the dud mass) only says the latent value is somewhere
+        in that stretch.
+        """
+        if self._runs is None:
+            n_b, n_z = self._tables.shape
+            lo = np.full((n_b, n_z - 1), -1, dtype=np.intp)
+            hi = np.full((n_b, n_z - 1), -1, dtype=np.intp)
+            for b, t in enumerate(self._tables):
+                flat = np.diff(t) == 0
+                k = 0
+                while k < n_z - 1:
+                    if not flat[k]:
+                        k += 1
+                        continue
+                    end = k
+                    while end + 1 < n_z - 1 and flat[end + 1]:
+                        end += 1
+                    lo[b, k : end + 1] = k
+                    hi[b, k : end + 1] = end + 1
+                    k = end + 1
+            self._runs = (lo, hi)
+        return self._runs
 
     def blend(self, means: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Bucket indices (i0, i1) and weight w for each projected mean."""
@@ -195,6 +246,81 @@ class ErrorModel:
                     f = (x - col[lo - 1]) / (col[lo] - col[lo - 1])
                     z = Z_GRID[lo - 1] + f * (Z_GRID[lo] - Z_GRID[lo - 1])
                 out[start + k] = z
+        return out
+
+    def expected_points(
+        self,
+        means: np.ndarray,
+        shift: np.ndarray,
+        scale: np.ndarray,
+        positions: Sequence[str | None],
+    ) -> np.ndarray:
+        """E[points] when the latent value is N(shift, scale^2) instead of N(0, 1).
+
+        All arrays broadcast to (..., P); ``positions`` has length P. With
+        shift 0 and scale 1 this is the projection itself.
+        """
+        means = np.asarray(means, dtype=np.float64)
+        shape = np.broadcast_shapes(means.shape, np.shape(shift), np.shape(scale))
+        out = np.zeros(shape, dtype=np.float32)
+        means = np.broadcast_to(means, shape)
+        sf = np.clip((np.broadcast_to(shift, shape) - SHIFT_GRID[0]) / _DS, 0, len(SHIFT_GRID) - 1)
+        cf = np.clip((np.broadcast_to(scale, shape) - SCALE_GRID[0]) / _DC, 0, len(SCALE_GRID) - 1)
+        si = np.minimum(sf.astype(np.intp), len(SHIFT_GRID) - 2)
+        ci = np.minimum(cf.astype(np.intp), len(SCALE_GRID) - 2)
+        sw, cw = sf - si, cf - ci
+        by_pos: dict[str | None, list[int]] = defaultdict(list)
+        for j, pos in enumerate(positions):
+            by_pos[pos].append(j)
+        for pos, cols in by_pos.items():
+            pm = self._position_model(pos)
+            g = pm.shifted_means()
+            m = means[..., cols]
+            i0, i1, w = pm.blend(m)
+            s0, s1, c0, c1 = si[..., cols], si[..., cols] + 1, ci[..., cols], ci[..., cols] + 1
+            a, c = sw[..., cols], cw[..., cols]
+
+            def at(b: np.ndarray, g=g, s0=s0, s1=s1, c0=c0, c1=c1, a=a, c=c) -> np.ndarray:
+                return (
+                    g[b, s0, c0] * (1 - a) * (1 - c)
+                    + g[b, s1, c0] * a * (1 - c)
+                    + g[b, s0, c1] * (1 - a) * c
+                    + g[b, s1, c1] * a * c
+                )
+
+            v = at(i0) * (1 - w) + at(i1) * w
+            pts = m * v if pm.kind == "ratio" else m + v
+            out[..., cols] = np.where(m > 0, pts, 0.0)
+        return out
+
+    def observable_latent(
+        self, z: np.ndarray, means: np.ndarray, positions: Sequence[str | None]
+    ) -> np.ndarray:
+        """The latent value a manager can infer from the score ``sample(z, means)``.
+
+        Equal to ``z`` (clipped to the grid) where the quantile function is
+        strictly increasing; in a flat stretch (e.g. the dud mass) only the
+        stretch is known, and its midpoint is returned, matching ``to_latent_many``.
+        """
+        zc = np.clip(z, Z_MIN, Z_MAX)
+        means = np.broadcast_to(np.asarray(means, dtype=np.float64), zc.shape)
+        k = np.minimum(((zc - Z_MIN) / _DZ).astype(np.intp), Z_POINTS - 2)
+        out = zc.astype(np.float32, copy=True)
+        by_pos: dict[str | None, list[int]] = defaultdict(list)
+        for j, pos in enumerate(positions):
+            by_pos[pos].append(j)
+        for pos, cols in by_pos.items():
+            pm = self._position_model(pos)
+            run_lo, run_hi = pm.flat_runs()
+            i0, i1, w = pm.blend(means[..., cols])
+            kk = k[..., cols]
+            lo0, hi0, lo1, hi1 = run_lo[i0, kk], run_hi[i0, kk], run_lo[i1, kk], run_hi[i1, kk]
+            use0, use1 = w < 1, w > 0
+            flat = ((lo0 >= 0) | ~use0) & ((lo1 >= 0) | ~use1)
+            lo = np.maximum(np.where(use0, lo0, 0), np.where(use1, lo1, 0))
+            hi = np.minimum(np.where(use0, hi0, Z_POINTS - 1), np.where(use1, hi1, Z_POINTS - 1))
+            mid = (Z_GRID[np.clip(lo, 0, Z_POINTS - 1)] + Z_GRID[np.clip(hi, 0, Z_POINTS - 1)]) / 2
+            out[..., cols] = np.where(flat, mid, out[..., cols])
         return out
 
     def mean(self, mean: float, position: str) -> float:

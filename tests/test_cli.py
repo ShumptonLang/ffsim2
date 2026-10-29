@@ -66,6 +66,18 @@ def test_decision_commands_run(args):
     assert "Δ" in res.output or "No acceptable trade" in res.output
 
 
+def test_plan_dynamic_shows_both_engines():
+    res = runner.invoke(
+        cli.app,
+        ["plan", "-l", LEAGUE_ID, "-m", "1", "-n", "300", "--dynamic", "--fast", "--paths", "200"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "Waiver pickups" in res.output  # the static plan is unchanged and still shown
+    assert "Dynamic (managers claim and drop all season)" in res.output
+    assert "Δ Title (dynamic)" in res.output and "Δ Title (static)" in res.output
+    assert "Policy:" in res.output
+
+
 def test_waivers_lists_free_agent():
     res = runner.invoke(cli.app, ["waivers", "-l", LEAGUE_ID, "-m", "1", "-n", "300"])
     assert "Free Agent" in res.output and "(open spot)" in res.output
