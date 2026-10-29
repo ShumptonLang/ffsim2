@@ -354,7 +354,13 @@ def plan(
     iterations: Annotated[
         int | None, typer.Option("--iterations", help="Dynamic: policy-iteration rounds.")
     ] = None,
-    workers: Annotated[int, typer.Option("--workers", help="Dynamic: worker processes.")] = 1,
+    workers: Annotated[
+        int,
+        typer.Option(
+            "--workers",
+            help="Dynamic: worker processes (with numba installed, one already uses all cores).",
+        ),
+    ] = 1,
     pool: Annotated[
         int, typer.Option("--free-agents", help="Dynamic: free agents per position simulated.")
     ] = 25,

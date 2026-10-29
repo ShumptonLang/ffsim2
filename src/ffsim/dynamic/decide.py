@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
@@ -134,8 +135,12 @@ class Runner:
         self.opts = opts
         self.pool: ProcessPoolExecutor | None = None
         if opts.workers > 1:
+            # Spawn, not fork: forking after numba's threading layer starts is unsafe.
             self.pool = ProcessPoolExecutor(
-                opts.workers, initializer=_init_worker, initargs=(season,)
+                opts.workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_init_worker,
+                initargs=(season,),
             )
         else:
             _init_worker(season)
