@@ -113,6 +113,10 @@ class GreedyPolicy:
             vals = valuer.week_values(loo, rows, k_loo)  # (n, R + 1, Wr); last = current
             loss = ((vals[:, R : R + 1] - vals[:, :R]) * L).sum(-1)
             loss += np.where(ros >= 0, 1e-12, 0.0)  # on ties, fill an open spot first
+            # Rosters are padded to the league's largest; a blank row is only an open
+            # spot while the team is under the roster limit.
+            full = (ros >= 0).sum(1) >= state.capacity
+            loss = np.where((ros < 0) & full[:, None], np.inf, loss)
             drops = np.argsort(loss, axis=1, kind="stable")[:, : min(o.top_drops, R)]
             # Cheap screen for adds: points over the weakest eligible starter.
             start = valuer.expected_lineup(ros[:, None, :], rows)[:, 0]  # (n, Wr, S)
@@ -138,7 +142,9 @@ class GreedyPolicy:
             diff = cvals[:, :-1] - cvals[:, -1:]
             dv = (diff * L).sum(-1)
             now = diff[:, :, 0] * L[0]
-            dv = np.where(np.repeat(add_ok, D, axis=1), dv, -np.inf)
+            drop_ok = np.isfinite(np.take_along_axis(loss, drops, 1))  # (n, D)
+            dv = np.where(add_ok[:, :, None] & drop_ok[:, None, :], dv.reshape(n, A, D), -np.inf)
+            dv = dv.reshape(n, A * D)
             immediate = (dv > EPS) & (now > EPS)
             best_any = np.argmax(dv, axis=1)
             best_now = np.argmax(np.where(immediate, dv, -np.inf), axis=1)
@@ -223,7 +229,9 @@ class GreedyPolicy:
             diff = cvals - base[:, None, :]
             dv = (diff * L).sum(-1)
             now = diff[:, :, 0] * L[0]
-            dv = np.where(np.repeat(add_ok, D, axis=1), dv, -np.inf)
+            drop_ok = np.isfinite(np.take_along_axis(loss, drops, 1))  # (n, D)
+            dv = np.where(add_ok[:, :, None] & drop_ok[:, None, :], dv.reshape(n, A, D), -np.inf)
+            dv = dv.reshape(n, A * D)
             immediate = (dv > EPS) & (now > EPS)
             best_any = np.argmax(dv, axis=1)
             best_now = np.argmax(np.where(immediate, dv, -np.inf), axis=1)

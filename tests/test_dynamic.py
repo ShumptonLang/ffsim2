@@ -282,6 +282,22 @@ def _first_move_delta(season, policy, first, draws, move):
     return paired_delta(*out), base
 
 
+def test_full_roster_drops_someone_even_if_a_rival_is_over_the_limit(models):
+    """Rosters are padded to the largest; the padding isn't an open spot."""
+    inp = make_inputs()
+    inp.rosters[2] = [*inp.rosters[2], "fa_bad"]  # team 2 is one over the limit
+    inp.free_agents = ["fa_w"]
+    season = DynamicSeason(inp, models, WaiverRules(), PolicyOptions(scenarios=4))
+    draws = season.draw(1, 200)
+    never = season.run(draws, None)
+    lev = estimate_leverage(inp, season.week_idx, never.team_pts)
+    first = season.first_decisions(GreedyPolicy(lev, None, 0, False, season.opts))
+    mine = first[0].claims[0]
+    assert mine and all(c.drop >= 0 for c in mine)
+    run = season.run(draws, GreedyPolicy(lev, None, 0, False, season.opts), first=first)
+    assert any(m.team == 0 and m.step == 0 for m in run.moves)  # the claim went through
+
+
 def test_kicker_for_bye_waits_until_the_bye_week(models):
     inp = kicker_bye_inputs()
     m = independent(models)
