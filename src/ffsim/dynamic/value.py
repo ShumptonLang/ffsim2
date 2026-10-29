@@ -5,10 +5,19 @@ A roster's value at decision step t is
     V = sum over weeks w >= t of  L[team, w] * E[lineup points in week w]
 
 where L is the team's title-odds leverage per point in each week (estimated from
-the simulation itself) and the expectation is over the manager's beliefs about
-each player's scoring and over imagined injury scenarios drawn from the
-availability model, conditioned on the injuries he knows about. Imagined
-scenarios are what give bench depth, handcuffs and bye cover their value.
+the simulation itself) and the expectation is over imagined scenarios of what
+the manager will know by each future week:
+
+* injuries, drawn from the availability model conditioned on the ones he knows;
+* projections moving, from talent learning (where his beliefs will be after the
+  games in between, a draw from their preposterior) and from projection news
+  not yet revealed (``RevealModel``).
+
+Lineups are re-chosen in every scenario and week, so a player is worth what he
+adds when he would actually start: bench depth, handcuffs, bye cover and the
+chance a backup becomes a starter all get their value. Averaged over scenarios,
+each player's expected points are exactly today's (the draws are
+mean-preserving); only the option to react to them adds value.
 """
 
 from __future__ import annotations
@@ -23,14 +32,56 @@ from ffsim.model.errors import ErrorModel
 from ffsim.sim.engine import DrawSetup
 
 
+def known_means(draws: PathDraws, setup: DrawSetup, t: int) -> np.ndarray:
+    """(B, W - t, P) projections for weeks t.. as seen at decision step t."""
+    return setup.means[None, t:] * np.exp(draws.known_log(t)[:, t:])
+
+
 def expected_points(
-    draws: PathDraws, beliefs: Beliefs, setup: DrawSetup, errors: ErrorModel, t: int
+    means: np.ndarray, beliefs: Beliefs, setup: DrawSetup, errors: ErrorModel
 ) -> np.ndarray:
-    """(B, W - t, P) expected points for weeks t.. as seen at decision step t."""
-    known = draws.known_log(t)[:, t:]
-    means = setup.means[None, t:] * np.exp(known)
+    """(B, Wr, P) expected points from projections ``means`` and current beliefs."""
     shift, scale = beliefs.posterior()
     return errors.expected_points(means, shift[:, None, :], scale[:, None, :], setup.positions)
+
+
+def imagined_points(
+    means: np.ndarray,
+    news_var: np.ndarray,
+    beliefs: Beliefs,
+    active: np.ndarray,
+    errors: ErrorModel,
+    positions: list[str | None],
+    k: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """(B, k, Wr, P) expected points for weeks t.. as the manager will see them then.
+
+    ``means`` (B, Wr, P): projections as seen now; ``news_var`` (Wr, P): news
+    variance still to come for each week; ``active`` (Wr, P): the player has a
+    game that week (each game played before week w updates beliefs).
+
+    Talent: the posterior on the talent factor is N(m, v) with v = 1 / (1 + n a),
+    a = rho / (1 - rho). After j more games it will be N(m', v_j) with
+    m' ~ N(m, v - v_j), drawn as a path across weeks so it is consistent within a
+    scenario. The week's own news is drawn mean-preserving on the log scale.
+    """
+    B, Wr, P = means.shape
+    rho = beliefs.rho
+    a = rho / np.maximum(1.0 - rho, 1e-9)
+    v_now = 1.0 / (1.0 + beliefs.n * a)  # (B, P)
+    m_now = np.sqrt(rho) / np.maximum(1.0 - rho, 1e-9) * beliefs.zsum * v_now
+    games = np.concatenate([np.zeros((1, P)), np.cumsum(active[:-1], axis=0)], axis=0)
+    v = 1.0 / (1.0 + (beliefs.n[:, None, :] + games[None]) * a)  # (B, Wr, P)
+    step = np.diff(np.concatenate([v_now[:, None, :], v], axis=1), axis=1)  # <= 0
+    sd = np.sqrt(np.maximum(-step, 0.0))
+    walk = np.cumsum(rng.standard_normal((B, k, Wr, P)) * sd[:, None], axis=2)
+    shift = np.sqrt(rho) * (m_now[:, None, None, :] + walk)
+    scale = np.sqrt(1.0 - rho + rho * v)[:, None]
+    news = np.sqrt(np.maximum(news_var, 0.0))
+    mult = np.exp(news * rng.standard_normal((B, k, Wr, P)) - news_var / 2)
+    out = errors.expected_points(means[:, None] * mult, shift, scale, positions)
+    return out.astype(np.float32)
 
 
 def imagined_availability(
@@ -91,10 +142,13 @@ class RosterValuer:
     """Per-week expected lineup points for many candidate rosters at once."""
 
     def __init__(self, exp_pts: np.ndarray, avail: np.ndarray, spec: SlotSpec) -> None:
-        B, Wr, P = exp_pts.shape
+        if exp_pts.ndim == 3:  # the same expected points in every scenario
+            exp_pts = exp_pts[:, None]
+        B, _, Wr, P = exp_pts.shape
         self.B, self.Wr, self.P = B, Wr, P
-        # Transposed with a sentinel row P for open roster spots.
-        self.e = np.concatenate([exp_pts, np.zeros((B, Wr, 1), np.float32)], -1).transpose(0, 2, 1)
+        # Transposed with a sentinel row P for open roster spots: (B, P + 1, K or 1, Wr).
+        pad = np.zeros((*exp_pts.shape[:3], 1), np.float32)
+        self.e = np.concatenate([exp_pts.astype(np.float32), pad], -1).transpose(0, 3, 1, 2)
         a = np.concatenate([avail, np.zeros((*avail.shape[:3], 1), bool)], -1)
         self.a = a.transpose(0, 3, 1, 2)  # (B, P + 1, K, Wr)
         self.spec = spec
@@ -111,9 +165,9 @@ class RosterValuer:
         """
         idx = np.where(rosters >= 0, rosters, self.P)
         b = (self.rows if rows is None else rows)[:, None, None]
-        e = self.e[b, idx]  # (n, C, R, Wr)
+        e = self.e[b, idx, :k]  # (n, C, R, K or 1, Wr)
         a = self.a[b, idx, :k]  # (n, C, R, K, Wr)
-        vals = np.where(a, e[:, :, :, None, :], -np.inf).transpose(0, 1, 3, 4, 2)
+        vals = np.where(a, e, -np.inf).transpose(0, 1, 3, 4, 2)
         n, C, K, Wr, R = vals.shape
         total = greedy_totals(
             vals.reshape(n * C, K * Wr, R), self.spec.elig[idx].reshape(n * C, R, -1),
@@ -125,7 +179,7 @@ class RosterValuer:
         """(n, T, Wr, S) starter values for rosters (n, T, R) on expected availability."""
         idx = np.where(rosters >= 0, rosters, self.P)
         b = (self.rows if rows is None else rows)[:, None, None]
-        e = self.e[b, idx] * self.a[b, idx].mean(axis=3)  # (B, T, R, Wr)
+        e = (self.e[b, idx] * self.a[b, idx]).mean(axis=3)  # (n, T, R, Wr)
         vals = e.transpose(0, 1, 3, 2)
         vals = np.where(idx[:, :, None, :] < self.P, vals, -np.inf)
         elig = self.spec.elig[idx][:, :, None]
@@ -136,5 +190,5 @@ class RosterValuer:
     def expected_values(self, rows: np.ndarray | None = None) -> np.ndarray:
         """(n, P, Wr) each player's expected points times availability."""
         if self._ev is None:
-            self._ev = self.e[:, : self.P] * self.a[:, : self.P].mean(axis=2)
+            self._ev = (self.e[:, : self.P] * self.a[:, : self.P]).mean(axis=2)
         return self._ev if rows is None else self._ev[rows]

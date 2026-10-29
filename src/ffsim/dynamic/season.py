@@ -21,11 +21,17 @@ import numpy as np
 from ffsim.dynamic.beliefs import Beliefs
 from ffsim.dynamic.claims import Claim, apply_claim, resolve
 from ffsim.dynamic.lineups import SlotSpec, lineups
-from ffsim.dynamic.paths import PathDraws, draw_paths
+from ffsim.dynamic.paths import PathDraws, draw_paths, news_variances, unknown_news_var
 from ffsim.dynamic.policy import GreedyPolicy, PolicyOptions, TeamDecision, contested
 from ffsim.dynamic.rules import WaiverRules
 from ffsim.dynamic.state import FREE, PathLeague
-from ffsim.dynamic.value import RosterValuer, expected_points, imagined_availability
+from ffsim.dynamic.value import (
+    RosterValuer,
+    expected_points,
+    imagined_availability,
+    imagined_points,
+    known_means,
+)
 from ffsim.model.models import ModelSet
 from ffsim.sim.engine import DrawSetup
 from ffsim.sim.inputs import SimInputs
@@ -87,6 +93,12 @@ class DynamicSeason:
         self.week_idx = {w: i for i, w in enumerate(inputs.weeks)}
         self.setup = DrawSetup.build(inputs, models, self.players)
         self.spec = SlotSpec.build(inputs.slots, self.players, inputs.positions)
+        W, P = self.setup.means.shape
+        self.news_var = np.zeros((W, W, P))  # [t, w] news still unknown at step t
+        if news:
+            var_at, _, K = news_variances(inputs, models, self.players)
+            if K > 0:
+                self.news_var = unknown_news_var(var_at, K)
 
     @property
     def n_weeks(self) -> int:
@@ -137,7 +149,8 @@ class DynamicSeason:
         if forced is not None and forced.kind == "trade":
             self._apply_trade(state, forced)
         for t in range(W):
-            exp_pts = expected_points(draws, beliefs, self.setup, self.models.errors, t)
+            means = known_means(draws, self.setup, t)
+            exp_pts = expected_points(means, beliefs, self.setup, self.models.errors)
             if policy is not None:
                 if t == 0:
                     decisions = first if first is not None else self.first_decisions(policy, seed)
@@ -148,7 +161,11 @@ class DynamicSeason:
                     avail = imagined_availability(
                         self.models.availability, self.setup, absence, t, self.opts.scenarios, rng
                     )
-                    valuer = RosterValuer(exp_pts, avail, self.spec)
+                    valuer = RosterValuer(
+                        self._imagined(means, exp_pts, beliefs, t, self.opts.scenarios, rng),
+                        avail,
+                        self.spec,
+                    )
                     decisions = [policy.decide(state, valuer, self.spec, ti, t) for ti in range(T)]
                     for b in range(B):
                         for c in resolve(state, b, contested(decisions, b), kind, t):
@@ -169,21 +186,33 @@ class DynamicSeason:
         """
         state = PathLeague.initial(self.inputs, self.pidx, self.rules, 1)
         beliefs = Beliefs(1, self.setup.rho)
-        exp_pts = self._first_expected(beliefs)
+        means = self.setup.means[None]
+        exp_pts = expected_points(means, beliefs, self.setup, self.models.errors)
         rng = np.random.default_rng(np.random.SeedSequence([seed, 11]))
         k = self.opts.scenarios * FIRST_STEP_SCENARIO_FACTOR
         avail = imagined_availability(self.models.availability, self.setup, None, 0, k, rng)
-        valuer = RosterValuer(exp_pts, avail, self.spec)
+        valuer = RosterValuer(self._imagined(means, exp_pts, beliefs, 0, k, rng), avail, self.spec)
         return [
             policy.decide(state, valuer, self.spec, ti, 0, n_options=n_options * (ti == focal))
             for ti in range(self.inputs.n_teams)
         ]
 
-    def _first_expected(self, beliefs: Beliefs) -> np.ndarray:
-        shift, scale = beliefs.posterior()
-        return self.models.errors.expected_points(
-            self.setup.means[None], shift[:, None, :], scale[:, None, :], self.setup.positions
-        )
+    def _imagined(
+        self,
+        means: np.ndarray,
+        exp_pts: np.ndarray,
+        beliefs: Beliefs,
+        t: int,
+        k: int,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Per-scenario expected points for the valuer (or today's, if switched off)."""
+        if not self.opts.imagine_projections:
+            return exp_pts
+        return imagined_points(
+            means, self.news_var[t, t:], beliefs, self.setup.active[t:],
+            self.models.errors, self.setup.positions, k, rng,
+        )  # fmt: skip
 
     def _first_step(
         self,

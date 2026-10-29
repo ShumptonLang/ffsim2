@@ -38,7 +38,8 @@ class PolicyOptions:
     top_adds: int = 6  # free agents fully evaluated per manager and step
     top_drops: int = 3  # roster spots considered for dropping
     max_moves: int = 2  # adds per manager per step
-    scenarios: int = 6  # imagined injury scenarios behind each roster value
+    scenarios: int = 6  # imagined scenarios (injuries, projection moves) per roster value
+    imagine_projections: bool = True  # scenarios include projection moves, not just injuries
 
 
 @dataclass
@@ -105,12 +106,11 @@ class GreedyPolicy:
         for move in range(o.max_moves):
             n = len(rows)
             ros = roster[rows]
-            # Leave-one-out losses pick the drop candidates (open spots lose nothing);
-            # a few imagined scenarios are enough for this screen.
+            # Leave-one-out losses pick the drop candidates (open spots lose nothing).
+            # Bench values are small differences, so this screen uses every scenario.
             loo = np.broadcast_to(ros[:, None, :], (n, R + 1, R)).copy()
             loo[:, np.arange(R), np.arange(R)] = -1
-            k_loo = max(1, o.scenarios // 4)
-            vals = valuer.week_values(loo, rows, k_loo)  # (n, R + 1, Wr); last = current
+            vals = valuer.week_values(loo, rows)  # (n, R + 1, Wr); last = current
             loss = ((vals[:, R : R + 1] - vals[:, :R]) * L).sum(-1)
             loss += np.where(ros >= 0, 1e-12, 0.0)  # on ties, fill an open spot first
             # Rosters are padded to the league's largest; a blank row is only an open

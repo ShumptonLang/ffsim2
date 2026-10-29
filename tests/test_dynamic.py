@@ -149,6 +149,46 @@ def test_expected_points_and_observable_latent(models):
         assert np.abs(obs[:, j] - ref).max() < 0.02
 
 
+def test_imagined_projections_average_to_todays(models):
+    from ffsim.dynamic.value import expected_points, imagined_points
+
+    inp = make_inputs()
+    season = DynamicSeason(inp, models, WaiverRules())
+    rho = np.full(len(season.players), 0.3)
+    b = Beliefs(1, rho)
+    b.observe(np.full((1, len(rho)), 0.8), np.ones((1, len(rho)), dtype=bool))  # a hot start
+    means = season.setup.means[None]
+    news = np.full(means.shape[1:], 0.05)
+    news[0] = 0.0  # this week's news is already in
+    now = expected_points(means, b, season.setup, models.errors)
+    rng = np.random.default_rng(0)
+    imag = imagined_points(means, news, b, season.setup.active, models.errors,
+                           season.setup.positions, 20_000, rng)  # fmt: skip
+    assert np.allclose(imag[:, :, 0], now[:, None, 0], rtol=1e-4)  # nothing new before this week
+    assert imag.mean(1) == pytest.approx(now, rel=0.02)
+    assert imag[0, :, -1, season.pidx["w1a"]].std() > 0.5  # but later weeks can move
+
+
+def test_backups_gain_value_when_projections_can_move(models):
+    from ffsim.dynamic.value import RosterValuer, imagined_points
+
+    players = ["starter", "backup"]
+    spec = SlotSpec.build(["WR"], players, {p: ("WR",) for p in players})
+    b = Beliefs(1, np.array([0.5, 0.5]))
+    means = np.tile(np.array([10.0, 9.5]), (1, 6, 1))  # (1, Wr, P)
+    avail = np.ones((1, 400, 6, 2), dtype=bool)  # no injuries: a backup is only an option
+    flat = means.astype(np.float32)
+    news = np.full((6, 2), 0.04)
+    rng = np.random.default_rng(1)
+    moving = imagined_points(
+        means, news, b, np.ones((6, 2), bool), models.errors, ["WR", "WR"], 400, rng
+    )
+    rosters = np.array([[[0, 1], [0, -1]]])  # with and without the backup
+    for exp, worth in ((flat, False), (moving, True)):
+        v = RosterValuer(exp, avail, spec).week_values(rosters).sum(-1)[0]
+        assert bool(v[0] - v[1] > 1.0) == worth
+
+
 def test_beliefs_match_normal_update():
     rho = np.array([0.0, 0.2, 0.5])
     b = Beliefs(1, rho)

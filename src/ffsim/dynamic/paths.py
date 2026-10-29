@@ -70,6 +70,16 @@ def news_variances(
     return var_at, var_at[np.clip(np.arange(W), 0, K), np.arange(W)], K
 
 
+def unknown_news_var(var_at: np.ndarray, K: int) -> np.ndarray:
+    """(W, W, P) [t, w]: news variance for week w still unknown at decision step t."""
+    W, P = var_at.shape[1:]
+    out = np.zeros((W, W, P))
+    for t in range(W):
+        lead = np.clip(np.arange(W) - t, 0, K)
+        out[t] = var_at[lead, np.arange(W)]
+    return out
+
+
 def draw_paths(
     setup: DrawSetup,
     inputs: SimInputs,
@@ -97,10 +107,7 @@ def draw_paths(
         # cum[..., l] = sum of increments at levels <= l (still unknown at lead l).
         cum = np.zeros((n, W, P, K + 1), dtype=np.float32)
         cum[..., 1:] = np.cumsum(inc, axis=-1)
-        var_lead = np.zeros((W, W, P))
-        for t in range(W):
-            lead = np.clip(np.arange(W) - t, 0, K)
-            var_lead[t] = var_at[lead, np.arange(W)]
+        var_lead = unknown_news_var(var_at, K)
         log_true = cum[..., K] - var_total / 2
     batch = draw_batch(setup, models, rng, n, log_reveal=log_true, keep_state=True)
     assert batch.z is not None and batch.absence is not None
