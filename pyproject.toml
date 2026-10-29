@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
+fast = ["numba>=0.60"]  # compiled roster valuation for `ffsim plan --dynamic`
 
 [project.scripts]
 ffsim = "ffsim.cli:app"

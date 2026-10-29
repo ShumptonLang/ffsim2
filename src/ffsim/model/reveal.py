@@ -128,7 +128,7 @@ def fit_reveal(
                 if not _startable(pos, pt):
                     continue
                 between = [
-                    np.log((wk[u][1] + 1.0) / (wk[u][0] + 1.0))
+                    np.clip((wk[u][1] - wk[u][0]) / wk[u][0], -1.0, 3.0)
                     for u in range(t, w)
                     if u in wk and wk[u][2] and wk[u][0] > 0
                 ]

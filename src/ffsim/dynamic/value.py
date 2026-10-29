@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from ffsim.dynamic.beliefs import Beliefs
-from ffsim.dynamic.lineups import SlotSpec, greedy_lineups
+from ffsim.dynamic.lineups import SlotSpec, greedy_lineups, greedy_totals
 from ffsim.dynamic.paths import PathDraws
 from ffsim.model.availability import SEASON_ENDING, SEASON_OUT, AvailabilityModel
 from ffsim.model.errors import ErrorModel
@@ -99,22 +99,32 @@ class RosterValuer:
         self.a = a.transpose(0, 3, 1, 2)  # (B, P + 1, K, Wr)
         self.spec = spec
         self.rows = np.arange(B)
+        self._ev: np.ndarray | None = None
 
-    def week_values(self, rosters: np.ndarray) -> np.ndarray:
-        """(B, C, Wr) expected lineup points for candidate rosters (B, C, R)."""
+    def week_values(
+        self, rosters: np.ndarray, rows: np.ndarray | None = None, k: int | None = None
+    ) -> np.ndarray:
+        """(n, C, Wr) expected lineup points for candidate rosters (n, C, R).
+
+        ``rows`` selects the paths (default all); ``k`` uses only the first k
+        imagined scenarios (a cheaper, noisier screen).
+        """
         idx = np.where(rosters >= 0, rosters, self.P)
-        b = self.rows[:, None, None]
-        e = self.e[b, idx]  # (B, C, R, Wr)
-        a = self.a[b, idx]  # (B, C, R, K, Wr)
+        b = (self.rows if rows is None else rows)[:, None, None]
+        e = self.e[b, idx]  # (n, C, R, Wr)
+        a = self.a[b, idx, :k]  # (n, C, R, K, Wr)
         vals = np.where(a, e[:, :, :, None, :], -np.inf).transpose(0, 1, 3, 4, 2)
-        elig = self.spec.elig[idx][:, :, None, None]  # (B, C, 1, 1, R, S)
-        total, _ = greedy_lineups(vals, elig, self.spec.order)
-        return total.mean(axis=2)
+        n, C, K, Wr, R = vals.shape
+        total = greedy_totals(
+            vals.reshape(n * C, K * Wr, R), self.spec.elig[idx].reshape(n * C, R, -1),
+            self.spec.order,
+        )  # fmt: skip
+        return total.reshape(n, C, K, Wr).mean(axis=2)
 
-    def expected_lineup(self, rosters: np.ndarray) -> np.ndarray:
-        """(B, T, Wr, S) starter values for rosters (B, T, R) on expected availability."""
+    def expected_lineup(self, rosters: np.ndarray, rows: np.ndarray | None = None) -> np.ndarray:
+        """(n, T, Wr, S) starter values for rosters (n, T, R) on expected availability."""
         idx = np.where(rosters >= 0, rosters, self.P)
-        b = self.rows[:, None, None]
+        b = (self.rows if rows is None else rows)[:, None, None]
         e = self.e[b, idx] * self.a[b, idx].mean(axis=3)  # (B, T, R, Wr)
         vals = e.transpose(0, 1, 3, 2)
         vals = np.where(idx[:, :, None, :] < self.P, vals, -np.inf)
@@ -123,6 +133,8 @@ class RosterValuer:
         sv = np.take_along_axis(vals, np.maximum(starters, 0), axis=-1)
         return np.where(starters >= 0, sv, 0.0)
 
-    def expected_values(self) -> np.ndarray:
-        """(B, P, Wr) each player's expected points times availability."""
-        return self.e[:, : self.P] * self.a[:, : self.P].mean(axis=2)
+    def expected_values(self, rows: np.ndarray | None = None) -> np.ndarray:
+        """(n, P, Wr) each player's expected points times availability."""
+        if self._ev is None:
+            self._ev = self.e[:, : self.P] * self.a[:, : self.P].mean(axis=2)
+        return self._ev if rows is None else self._ev[rows]

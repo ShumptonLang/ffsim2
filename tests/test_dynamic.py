@@ -9,7 +9,7 @@ from ffsim.dynamic.beliefs import Beliefs
 from ffsim.dynamic.claims import Claim, resolve
 from ffsim.dynamic.decide import DynamicOptions, make_dynamic_plan
 from ffsim.dynamic.leverage import estimate_leverage
-from ffsim.dynamic.lineups import SlotSpec, exact_lineups, greedy_lineups
+from ffsim.dynamic.lineups import SlotSpec, exact_lineups, greedy_lineups, greedy_totals
 from ffsim.dynamic.paths import draw_paths
 from ffsim.dynamic.policy import GreedyPolicy, PolicyOptions
 from ffsim.dynamic.rules import WaiverRules
@@ -65,7 +65,7 @@ def test_never_move_reproduces_static_engine(models):
     season = DynamicSeason(inp, models, WaiverRules())
     draws = draw_paths(
         season.setup, inp, models, season.players,
-        np.random.default_rng(4), np.random.default_rng(1), 400,
+        np.random.default_rng(4), np.random.default_rng(1), 400, news=False,
     )  # fmt: skip
     run = season.run(draws, None, learn=False)
     assert np.array_equal(run.team_pts, ev.base_team_pts)
@@ -111,6 +111,20 @@ def test_greedy_lineups_match_hungarian(slots):
         means = {players[r]: v for r, v in zip(roster, vals, strict=True) if np.isfinite(v)}
         ref = sum(means[p] for p in best_lineup(slots, list(means), means, positions) if p)
         assert total == pytest.approx(ref) and exact == pytest.approx(ref)
+
+
+def test_compiled_and_numpy_lineup_totals_agree():
+    rng = np.random.default_rng(2)
+    slots = ["QB", "RB", "WR", "FLEX", "SUPER_FLEX", "K"]
+    players = [f"p{i}" for i in range(30)]
+    pool = ["QB", "RB", "WR", "TE", "K"]
+    spec = SlotSpec.build(slots, players, {p: (pool[i % 5],) for i, p in enumerate(players)})
+    idx = rng.integers(0, 31, size=(20, 12))  # includes the empty-spot row
+    vals = rng.gamma(2, 5, size=(20, 7, 12)).astype(np.float32)
+    vals[rng.random(vals.shape) < 0.1] = -np.inf
+    fast = greedy_totals(vals, spec.elig[idx], spec.order)
+    slow = greedy_totals(vals, spec.elig[idx], spec.order, accelerate=False)
+    assert np.allclose(fast, slow)
 
 
 def test_overlapping_flex_layout_is_flagged_inexact():

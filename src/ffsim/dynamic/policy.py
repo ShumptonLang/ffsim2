@@ -32,10 +32,10 @@ EPS = 1e-9
 
 @dataclass
 class PolicyOptions:
-    top_adds: int = 8  # free agents fully evaluated per manager and step
-    top_drops: int = 4  # roster spots considered for dropping
+    top_adds: int = 6  # free agents fully evaluated per manager and step
+    top_drops: int = 3  # roster spots considered for dropping
     max_moves: int = 2  # adds per manager per step
-    scenarios: int = 8  # imagined injury scenarios behind each roster value
+    scenarios: int = 6  # imagined injury scenarios behind each roster value
 
 
 @dataclass
@@ -82,6 +82,81 @@ class GreedyPolicy:
         stash: list[Claim | None] = [None] * B
         if L.sum() <= 0:
             return TeamDecision(claims, stash)
+        roster = state.rosters[:, team].copy()  # (B, R)
+        R = roster.shape[1]
+        avail = state.available(step).copy()
+        if exclude is not None:
+            avail &= ~exclude
+        groups, group_of = np.unique(spec.elig[:-1], axis=0, return_inverse=True)
+        group_of = group_of.reshape(-1)
+        startable = spec.elig[:-1].any(1)
+        rows = np.arange(B)  # paths still looking for a move
+        for move in range(o.max_moves):
+            n = len(rows)
+            ros = roster[rows]
+            # Leave-one-out losses pick the drop candidates (open spots lose nothing);
+            # a few imagined scenarios are enough for this screen.
+            loo = np.broadcast_to(ros[:, None, :], (n, R + 1, R)).copy()
+            loo[:, np.arange(R), np.arange(R)] = -1
+            k_loo = max(1, o.scenarios // 4)
+            vals = valuer.week_values(loo, rows, k_loo)  # (n, R + 1, Wr); last = current
+            loss = ((vals[:, R : R + 1] - vals[:, :R]) * L).sum(-1)
+            loss += np.where(ros >= 0, 1e-12, 0.0)  # on ties, fill an open spot first
+            drops = np.argsort(loss, axis=1, kind="stable")[:, : min(o.top_drops, R)]
+            # Cheap screen for adds: points over the weakest eligible starter.
+            start = valuer.expected_lineup(ros[:, None, :], rows)[:, 0]  # (n, Wr, S)
+            thr = np.stack([np.where(g, start, np.inf).min(-1) for g in groups], axis=-1)
+            thr = np.where(np.isfinite(thr), thr, 0.0)  # (n, Wr, G)
+            ev = valuer.expected_values(rows)  # (n, P, Wr)
+            gain = np.maximum(ev - thr.transpose(0, 2, 1)[:, group_of], 0.0) @ L  # (n, P)
+            gain = np.where(avail[rows] & startable[None], gain, -1.0)
+            n_add = min(o.top_adds, gain.shape[1])
+            adds = np.argpartition(-gain, n_add - 1, axis=1)[:, :n_add]  # (n, A)
+            add_ok = np.take_along_axis(gain, adds, 1) > 0
+            if not add_ok.any():
+                break
+            # Full values for every (add, drop) pair, plus the current roster.
+            A, D = adds.shape[1], drops.shape[1]
+            cand = np.broadcast_to(ros[:, None, None, :], (n, A, D, R)).copy()
+            ai, di = np.meshgrid(np.arange(A), np.arange(D), indexing="ij")
+            cand[np.arange(n)[:, None, None], ai[None], di[None], drops[:, None, :]] = adds[
+                :, :, None
+            ]
+            full = np.concatenate([cand.reshape(n, A * D, R), ros[:, None, :]], axis=1)
+            cvals = valuer.week_values(full, rows)  # (n, A*D + 1, Wr)
+            diff = cvals[:, :-1] - cvals[:, -1:]
+            dv = (diff * L).sum(-1)
+            now = diff[:, :, 0] * L[0]
+            dv = np.where(np.repeat(add_ok, D, axis=1), dv, -np.inf)
+            immediate = (dv > EPS) & (now > EPS)
+            best_any = np.argmax(dv, axis=1)
+            best_now = np.argmax(np.where(immediate, dv, -np.inf), axis=1)
+            has_now = immediate.any(1)
+            for i, b in enumerate(rows):
+                pick = best_now[i] if has_now[i] else best_any[i]
+                g = float(dv[i, pick])
+                if g <= EPS:
+                    continue
+                a_i, d_i = divmod(int(pick), D)
+                slot = int(drops[i, d_i])
+                c = Claim(
+                    team=team,
+                    add=int(adds[i, a_i]),
+                    drop=int(roster[b, slot]),
+                    bid=self.bid(g, int(state.budget[b, team])),
+                    rank=move,
+                    gain=g,
+                )
+                if has_now[i]:
+                    claims[b].append(c)
+                    roster[b, slot] = c.add
+                    avail[b, c.add] = False
+                elif move == 0:
+                    stash[b] = c
+            rows = rows[has_now]
+            if not len(rows):
+                break
+        return TeamDecision(claims, stash)
         roster = state.rosters[:, team].copy()  # (B, R)
         R = roster.shape[1]
         avail = state.available(step).copy()

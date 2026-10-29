@@ -176,6 +176,7 @@ def fit(
     console.print(report.error_model_table(models.errors, cov))
     console.print(report.talent_table(models, diags))
     console.print(report.correlation_table(diags["correlation"]))  # type: ignore[arg-type]
+    console.print(report.reveal_table(models))
     console.print(f"Saved to {path}")
 
 

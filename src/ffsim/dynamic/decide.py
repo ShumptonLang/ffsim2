@@ -34,12 +34,12 @@ from ffsim.sim.inputs import SimInputs
 @dataclass
 class DynamicOptions:
     fit_paths: int = 1_000
-    screen_paths: int = 1_000
-    eval_paths: int = 4_000
+    screen_paths: int = 600
+    eval_paths: int = 3_000
     batch: int = 250
     iterations: int = 2
-    candidates: int = 12
-    finalists: int = 6
+    candidates: int = 10
+    finalists: int = 5
     workers: int = 1
     seed: int = 0
     policy: PolicyOptions = field(default_factory=PolicyOptions)

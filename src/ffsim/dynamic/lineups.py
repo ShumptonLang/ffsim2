@@ -7,6 +7,9 @@ restrictive slot first, each taking the best eligible player left. That is
 exact when the slots' eligibility sets are nested or disjoint (QB, RB, WR, TE,
 FLEX, SUPER_FLEX, IDP groups, IDP_FLEX) and every player has one position; other
 layouts use ``exact_lineups`` where exactness matters.
+
+Roster valuation calls this millions of times; with numba installed
+(``pip install ffsim[fast]``) a compiled kernel does it, otherwise numpy.
 """
 
 from __future__ import annotations
@@ -18,6 +21,11 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from ffsim.league import SLOT_ELIGIBILITY
+
+try:  # optional accelerator
+    import numba
+except ImportError:  # pragma: no cover - exercised when numba is absent
+    numba = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -55,18 +63,20 @@ def greedy_lineups(
     (..., S) member index or -1 for an empty slot).
     """
     shape = values.shape[:-1]
-    used = np.zeros(values.shape, dtype=bool)
+    left = np.array(values, dtype=np.float32, order="C")  # used members become -inf
+    by_slot = np.ascontiguousarray(np.moveaxis(elig, -1, 0))  # (S, ..., R)
     total = np.zeros(shape, dtype=np.float64)
     starters = np.full((*shape, elig.shape[-1]), -1, dtype=np.intp)
-    members = np.arange(values.shape[-1])
     for s in order:
-        v = np.where(elig[..., s] & ~used, values, -np.inf)
-        j = np.argmax(v, axis=-1)
-        best = np.take_along_axis(v, j[..., None], axis=-1)[..., 0]
+        v = np.where(by_slot[s], left, -np.inf)
+        j = np.argmax(v, axis=-1)[..., None]
+        best = np.take_along_axis(v, j, axis=-1)[..., 0]
         ok = best >= -1e-6  # like best_lineup, an empty slot beats a negative projection
         total += np.where(ok, best, 0.0)
-        starters[..., s] = np.where(ok, j, -1)
-        used |= (members == j[..., None]) & ok[..., None]
+        starters[..., s] = np.where(ok, j[..., 0], -1)
+        np.put_along_axis(
+            left, j, np.where(ok[..., None], -np.inf, np.take_along_axis(left, j, -1)), -1
+        )
     return total, starters
 
 
@@ -100,3 +110,49 @@ def lineups(
     if exact and not spec.exact:
         return exact_lineups(values, elig)
     return greedy_lineups(values, elig, spec.order)
+
+
+def _greedy_totals_numpy(values: np.ndarray, elig: np.ndarray, order: Sequence[int]) -> np.ndarray:
+    M, N, R = values.shape
+    total, _ = greedy_lineups(values, elig[:, None], order)
+    return total
+
+
+if numba is not None:
+
+    @numba.njit(cache=True, parallel=True)
+    def _greedy_totals_numba(values, elig, order):  # type: ignore[no-untyped-def]
+        M, N, R = values.shape
+        out = np.zeros((M, N))
+        for m in numba.prange(M):
+            used = np.zeros(R, dtype=np.bool_)
+            for n in range(N):
+                used[:] = False
+                tot = 0.0
+                for s in order:
+                    best = -np.inf
+                    jb = -1
+                    for r in range(R):
+                        if elig[m, r, s] and not used[r]:
+                            v = values[m, n, r]
+                            if v > best:
+                                best = v
+                                jb = r
+                    if jb >= 0 and best >= -1e-6:
+                        tot += best
+                        used[jb] = True
+                out[m, n] = tot
+        return out
+
+
+def greedy_totals(
+    values: np.ndarray, elig: np.ndarray, order: Sequence[int], accelerate: bool = True
+) -> np.ndarray:
+    """Lineup totals only, for ``values`` (M, N, R) sharing ``elig`` (M, R, S) across N."""
+    if accelerate and numba is not None:
+        return _greedy_totals_numba(
+            np.ascontiguousarray(values, dtype=np.float32),
+            np.ascontiguousarray(elig),
+            np.asarray(order, dtype=np.int64),
+        )
+    return _greedy_totals_numpy(values, elig, order)

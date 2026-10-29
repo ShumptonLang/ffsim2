@@ -351,6 +351,19 @@ def trade_detail(r: TradeResult, state: LeagueState, me: Team) -> Table:
     return t
 
 
+def reveal_table(models: ModelSet) -> Table:
+    rev = models.reveal
+    t = Table(title="Projection news still to come (sd of log projection; used by --dynamic)")
+    for col in ("Pos", "1 wk out", "3 wks out", "Not yet projected, 1 wk", "3 wks"):
+        t.add_column(col, justify="left" if col == "Pos" else "right")
+    for pos in sorted(set(rev.sigma2) | set(rev.sigma2_unpub)):
+        t.add_row(
+            pos,
+            *(f"{100 * rev.var(pos, k, pub) ** 0.5:.0f}%" for pub in (True, False) for k in (1, 3)),
+        )
+    return t
+
+
 def _move_label(move: Move, state: LeagueState) -> str:
     if move.kind == "none":
         return "No move this week"
