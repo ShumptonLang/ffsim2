@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -103,18 +103,27 @@ def _init_worker(season: DynamicSeason) -> None:
 
 
 BatchJob = tuple[
-    int, int, int, int, GreedyPolicy | None, int | None, Move | None, list[TeamDecision] | None
+    int,
+    int,
+    int,
+    int,
+    GreedyPolicy | None,
+    int | None,
+    Move | None,
+    list[TeamDecision] | None,
+    str | None,
 ]
 
 
 def _run_batch(args: BatchJob) -> SeasonRun:
-    seed, set_id, index, n, policy, focal, forced, first = args
+    seed, set_id, index, n, policy, focal, forced, first, kind = args
     assert _SEASON is not None
     ss = np.random.SeedSequence([seed, set_id, index])
     draws = _SEASON.draw(ss, n)
     return _SEASON.run(
-        draws, policy, seed=seed * 1000 + index, focal=focal, forced=forced, first=first
-    )
+        draws, policy, seed=seed * 1000 + index, focal=focal, forced=forced, first=first,
+        kind=kind,
+    )  # fmt: skip
 
 
 class Runner:
@@ -143,10 +152,11 @@ class Runner:
         focal: int | None = None,
         forced: Move | None = None,
         first: list[TeamDecision] | None = None,
+        kind: str | None = None,
     ) -> SeasonRun:
         sizes = [min(self.opts.batch, n - s) for s in range(0, n, self.opts.batch)]
         jobs = [
-            (self.opts.seed, set_id, i, b, policy, focal, forced, first)
+            (self.opts.seed, set_id, i, b, policy, focal, forced, first, kind)
             for i, b in enumerate(sizes)
         ]
         if self.pool is not None:
@@ -184,20 +194,39 @@ def fit_policy(
     run = runner.run(FIT_SET, opts.fit_paths, None)
     odds = [float((outcomes(season, run).champion == focal).mean())]
     leverage = estimate_leverage(inp, season.week_idx, run.team_pts)
-    price: float | None = None
-    budget = float(sum(rules.budgets.values()))
+    price: np.ndarray | None = None
+    budgets = np.array([rules.budgets.get(rid, 0) for rid in inp.team_ids], dtype=np.float64)
     policy = GreedyPolicy(leverage, price, rules.bid_min, rules.faab, opts.policy)
     for it in range(opts.iterations):
         progress(f"policy iteration {it + 1}/{opts.iterations}")
-        run = runner.run(FIT_SET, opts.fit_paths, policy)
+        # Before any FAAB price is fitted every bid is the minimum; process those
+        # claims by rolling priority rather than handing them all to the top spot.
+        kind = "rolling" if rules.faab and price is None else None
+        run = runner.run(FIT_SET, opts.fit_paths, policy, kind=kind)
         odds.append(float((outcomes(season, run).champion == focal).mean()))
         new = estimate_leverage(inp, season.week_idx, run.team_pts)
         leverage = 0.5 * leverage + 0.5 * new
         if rules.faab:
-            spent = float(won_gains(run, inp.n_teams, opts.fit_paths).sum())
-            price = budget / spent if spent > 0 else None
+            price = faab_prices(price, budgets, won_gains(run, inp.n_teams, opts.fit_paths))
         policy = GreedyPolicy(leverage, price, rules.bid_min, rules.faab, opts.policy)
     return policy, odds
+
+
+def faab_prices(
+    prev: np.ndarray | None, budgets: np.ndarray, gains: np.ndarray
+) -> np.ndarray | None:
+    """Per-team $ per unit of value: spend the budget on the value bought in a season.
+
+    Damped (geometric mean with the previous price); a team that bought nothing
+    keeps its price, or takes the most aggressive one if it has none yet.
+    """
+    raw = np.where(gains > 0, budgets / np.where(gains > 0, gains, 1.0), np.nan)
+    if np.isnan(raw).all():
+        return prev
+    fill = np.nanmax(raw)
+    if prev is None:
+        return np.where(np.isnan(raw), fill, raw)
+    return np.where(np.isnan(raw), prev, np.sqrt(prev * np.where(np.isnan(raw), 1.0, raw)))
 
 
 def outcomes(season: DynamicSeason, run: SeasonRun) -> Outcomes:
@@ -209,13 +238,46 @@ def _claim_move(season: DynamicSeason, c: Claim) -> Move:
     return Move("claim", p[c.add], p[c.drop] if c.drop >= 0 else None, c.bid)
 
 
+def _with_winning_bid(
+    season: DynamicSeason, first: list[TeamDecision], focal: int, move: Move
+) -> list[Move]:
+    """The move, plus the same claim at the bid that beats every rival's this week.
+
+    First-week claims resolve identically in every path, so the winning bid is
+    known exactly: one more than the best rival bid for the player (or equal, if
+    we hold the better waiver priority).
+    """
+    if move.kind != "claim" or move.add is None:
+        return [move]
+    add = season.pidx[move.add]
+    prio = season.rules.priority
+    me = season.inputs.team_ids[focal]
+    best, best_prio = -1, 0
+    for d in first:
+        if d is first[focal]:
+            continue
+        for c in d.claims[0] + ([d.stash[0]] if d.stash[0] is not None else []):
+            rid = season.inputs.team_ids[c.team]
+            if c.add == add and (c.bid, -prio.get(rid, 99)) > (best, -best_prio):
+                best, best_prio = c.bid, prio.get(rid, 99)
+    if best < 0:
+        return [move]
+    need = best if prio.get(me, 99) < best_prio else best + 1
+    need = max(need, season.rules.bid_min)
+    budget = season.rules.budgets.get(me, 0)
+    if need <= move.bid or need > budget:
+        return [move]
+    return [move, replace(move, bid=need)]
+
+
 def candidate_moves(
     season: DynamicSeason, first: list[TeamDecision], focal: int, extra: list[Move], limit: int
 ) -> tuple[list[Move], list[Move]]:
     """First moves worth comparing against the policy, and the policy's own claims.
 
     Candidates: doing nothing, the policy's deferred "stash" move, each of its
-    claims on its own, and ``extra`` (e.g. the static plan's pickups and trades).
+    claims on its own, ``extra`` (e.g. the static plan's pickups and trades),
+    then the policy's runner-up first moves.
     """
     mine = first[focal]
     policy_moves = [_claim_move(season, c) for c in mine.claims[0]]
@@ -225,10 +287,14 @@ def candidate_moves(
     if len(policy_moves) > 1:
         moves.extend(policy_moves)
     moves.extend(extra)
+    for c in (mine.options or [[]])[0]:
+        moves.append(_claim_move(season, c))
+    if season.rules.faab:
+        moves = [v for m in moves for v in _with_winning_bid(season, first, focal, m)]
     seen: set[tuple[str | None, ...]] = set()
     out = []
     for m in moves:
-        key = (m.kind, m.add, m.drop, *m.give, *m.get)
+        key = (m.kind, m.add, m.drop, str(m.bid), *m.give, *m.get)
         if key in seen:
             continue
         seen.add(key)
@@ -250,7 +316,7 @@ def make_dynamic_plan(
     runner = Runner(season, opts)
     try:
         policy, odds = fit_policy(runner, season, focal, opts, progress)
-        first = season.first_decisions(policy, opts.seed)
+        first = season.first_decisions(policy, opts.seed, focal, opts.candidates)
         extra_ok = [
             m for m in (extra or [])
             if all(p in season.pidx for p in (m.add, m.drop, *m.give, *m.get) if p)

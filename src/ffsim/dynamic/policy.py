@@ -12,8 +12,11 @@ myopic about timing:
 * Unless a rival is about to take the player: a deferred move whose player is
   in another manager's claims this step is claimed now.
 
-FAAB bids are ``price`` dollars per unit of value gained, with ``price`` fitted
-so that budgets are spent over the season (money is worthless afterwards).
+FAAB bids are ``price[team]`` dollars per unit of value gained. Each team's
+price is fitted so that it spends its own budget over the season (money is
+worthless afterwards), which also puts long shots and favourites on the same
+footing: a bid is the share of the budget matching the claim's share of the
+value the team expects to buy all season.
 """
 
 from __future__ import annotations
@@ -42,13 +45,14 @@ class PolicyOptions:
 class TeamDecision:
     claims: list[list[Claim]]  # per path, in preference order
     stash: list[Claim | None]  # per path, the best deferred move (claimed only if contested)
+    options: list[list[Claim]] | None = None  # per path, best first moves (if requested)
 
 
 class GreedyPolicy:
     def __init__(
         self,
         leverage: np.ndarray,
-        price: float | None,
+        price: np.ndarray | None,  # (T,) dollars per unit of value
         bid_min: int,
         faab: bool,
         opts: PolicyOptions,
@@ -59,10 +63,10 @@ class GreedyPolicy:
         self.faab = faab
         self.opts = opts
 
-    def bid(self, gain: float, budget: int) -> int:
+    def bid(self, gain: float, budget: int, team: int) -> int:
         if not self.faab:
             return 0
-        raw = 0 if self.price is None else int(round(self.price * gain))
+        raw = 0 if self.price is None else int(round(self.price[team] * gain))
         return int(min(max(raw, self.bid_min), budget))
 
     def decide(
@@ -73,16 +77,23 @@ class GreedyPolicy:
         team: int,
         step: int,
         exclude: np.ndarray | None = None,
+        n_options: int = 0,
     ) -> TeamDecision:
-        """Claims (and a stash candidate) for one team in every path."""
+        """Claims (and a stash candidate) for one team in every path.
+
+        ``n_options`` > 0 also returns that many of the best first moves per path
+        (immediate or not), for ranking alternatives to the policy's choice.
+        """
         o = self.opts
         B = state.n
         L = self.leverage[team, step:].astype(np.float64)
         claims: list[list[Claim]] = [[] for _ in range(B)]
         stash: list[Claim | None] = [None] * B
+        options: list[list[Claim]] | None = [[] for _ in range(B)] if n_options else None
         if L.sum() <= 0:
-            return TeamDecision(claims, stash)
+            return TeamDecision(claims, stash, options)
         roster = state.rosters[:, team].copy()  # (B, R)
+        roster0 = state.rosters[:, team]
         R = roster.shape[1]
         avail = state.available(step).copy()
         if exclude is not None:
@@ -143,7 +154,7 @@ class GreedyPolicy:
                     team=team,
                     add=int(adds[i, a_i]),
                     drop=int(roster[b, slot]),
-                    bid=self.bid(g, int(state.budget[b, team])),
+                    bid=self.bid(g, int(state.budget[b, team]), team),
                     rank=move,
                     gain=g,
                 )
@@ -153,11 +164,23 @@ class GreedyPolicy:
                     avail[b, c.add] = False
                 elif move == 0:
                     stash[b] = c
+            if move == 0 and options is not None:
+                for i, b in enumerate(rows):
+                    for pick in np.argsort(-dv[i])[:n_options]:
+                        if dv[i, pick] <= EPS:
+                            break
+                        a_i, d_i = divmod(int(pick), D)
+                        g = float(dv[i, pick])
+                        options[b].append(
+                            Claim(team, int(adds[i, a_i]), int(roster0[b, drops[i, d_i]]),
+                                  self.bid(g, int(state.budget[b, team]), team), 0, g)
+                        )  # fmt: skip
             rows = rows[has_now]
             if not len(rows):
                 break
-        return TeamDecision(claims, stash)
+        return TeamDecision(claims, stash, options)
         roster = state.rosters[:, team].copy()  # (B, R)
+        roster0 = state.rosters[:, team]
         R = roster.shape[1]
         avail = state.available(step).copy()
         if exclude is not None:
@@ -216,7 +239,7 @@ class GreedyPolicy:
                     team=team,
                     add=int(adds[b, a_i]),
                     drop=int(roster[b, slot]),
-                    bid=self.bid(g, int(state.budget[b, team])),
+                    bid=self.bid(g, int(state.budget[b, team]), team),
                     rank=move,
                     gain=g,
                 )

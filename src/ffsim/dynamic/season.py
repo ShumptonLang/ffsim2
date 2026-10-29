@@ -117,12 +117,15 @@ class DynamicSeason:
         forced: Move | None = None,
         first: list[TeamDecision] | None = None,
         learn: bool = True,
+        kind: str | None = None,
     ) -> SeasonRun:
         """Play every path. ``policy`` None means nobody ever moves.
 
         ``forced`` replaces the focal team's first-step decision. ``first`` reuses
-        precomputed first-step decisions (see ``first_decisions``).
+        precomputed first-step decisions (see ``first_decisions``). ``kind``
+        overrides the league's waiver processing.
         """
+        kind = kind or self.rules.kind
         inp = self.inputs
         B, W, T = draws.n, self.n_weeks, inp.n_teams
         state = PathLeague.initial(inp, self.pidx, self.rules, B)
@@ -138,7 +141,7 @@ class DynamicSeason:
             if policy is not None:
                 if t == 0:
                     decisions = first if first is not None else self.first_decisions(policy, seed)
-                    won = self._first_step(state, decisions, focal, forced, moves)
+                    won = self._first_step(state, decisions, focal, forced, moves, kind)
                     claim_won = won
                 else:
                     absence = draws.absence[:, t - 1]
@@ -148,7 +151,7 @@ class DynamicSeason:
                     valuer = RosterValuer(exp_pts, avail, self.spec)
                     decisions = [policy.decide(state, valuer, self.spec, ti, t) for ti in range(T)]
                     for b in range(B):
-                        for c in resolve(state, b, contested(decisions, b), self.rules.kind, t):
+                        for c in resolve(state, b, contested(decisions, b), kind, t):
                             moves.append(MoveRecord(b, t, c.team, c.add, c.drop, c.bid, c.gain))
             team_pts[:, t] = self._score_week(state, exp_pts[:, 0], draws, t)
             self._update_standings(state, team_pts[:, t], t)
@@ -157,8 +160,13 @@ class DynamicSeason:
                 beliefs.observe(draws.z_obs[:, t], played)
         return SeasonRun(team_pts, moves, claim_won)
 
-    def first_decisions(self, policy: GreedyPolicy, seed: int = 0) -> list[TeamDecision]:
-        """Every team's first-step decision, made once from the shared information."""
+    def first_decisions(
+        self, policy: GreedyPolicy, seed: int = 0, focal: int | None = None, n_options: int = 0
+    ) -> list[TeamDecision]:
+        """Every team's first-step decision, made once from the shared information.
+
+        The ``focal`` team also gets its ``n_options`` best first moves.
+        """
         state = PathLeague.initial(self.inputs, self.pidx, self.rules, 1)
         beliefs = Beliefs(1, self.setup.rho)
         exp_pts = self._first_expected(beliefs)
@@ -166,7 +174,10 @@ class DynamicSeason:
         k = self.opts.scenarios * FIRST_STEP_SCENARIO_FACTOR
         avail = imagined_availability(self.models.availability, self.setup, None, 0, k, rng)
         valuer = RosterValuer(exp_pts, avail, self.spec)
-        return [policy.decide(state, valuer, self.spec, ti, 0) for ti in range(self.inputs.n_teams)]
+        return [
+            policy.decide(state, valuer, self.spec, ti, 0, n_options=n_options * (ti == focal))
+            for ti in range(self.inputs.n_teams)
+        ]
 
     def _first_expected(self, beliefs: Beliefs) -> np.ndarray:
         shift, scale = beliefs.posterior()
@@ -181,6 +192,7 @@ class DynamicSeason:
         focal: int | None,
         forced: Move | None,
         moves: list[MoveRecord],
+        kind: str,
     ) -> np.ndarray | None:
         """Resolve the shared first-step claims once and copy the result to every path."""
         one = state.take([0])
@@ -196,7 +208,7 @@ class DynamicSeason:
                     bid=forced.bid,
                 )
                 claims.append(forced_claim)
-        won = resolve(one, 0, claims, self.rules.kind, 0)
+        won = resolve(one, 0, claims, kind, 0)
         for c in won:
             for b in range(state.n):
                 moves.append(MoveRecord(b, 0, c.team, c.add, c.drop, c.bid, c.gain))

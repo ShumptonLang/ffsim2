@@ -382,3 +382,41 @@ def test_models_round_trip_with_reveal(models):
     assert back.reveal.var("WR", 2) == 0.2 and back.reveal.var("WR", 9) == 0.2
     assert back.reveal.var("QB", 1) == 0.0
     assert ModelSet.default().reveal is not None
+
+
+# -- FAAB --------------------------------------------------------------------------------
+
+
+def test_faab_prices_spend_each_budget():
+    from ffsim.dynamic.decide import faab_prices
+
+    budgets = np.array([100.0, 50.0, 100.0])
+    first = faab_prices(None, budgets, np.array([0.5, 0.5, 0.0]))
+    assert first.tolist() == [200.0, 100.0, 200.0]  # a team that bought nothing bids hardest
+    damped = faab_prices(first, budgets, np.array([0.25, 0.5, 1.0]))
+    assert damped == pytest.approx([np.sqrt(200 * 400), 100.0, np.sqrt(200 * 100)])
+
+
+def test_winning_bid_beats_the_best_rival(models):
+    from ffsim.dynamic.decide import _with_winning_bid
+    from ffsim.dynamic.policy import TeamDecision
+
+    inp = make_inputs()
+    rules = WaiverRules("faab", {1: 60, 2: 60, 3: 60, 4: 60}, 1, {1: 3, 2: 1, 3: 2, 4: 4})
+    season = DynamicSeason(inp, models, rules)
+    ix = season.pidx
+    none = TeamDecision([[]], [None])
+    first = [
+        none,
+        TeamDecision([[Claim(1, ix["fa_w"], ix["r2"], bid=17)]], [None]),
+        TeamDecision([[]], [Claim(2, ix["fa_w"], ix["r3"], bid=20)]),  # contested stash
+        none,
+    ]
+    out = _with_winning_bid(season, first, 0, Move("claim", "fa_w", "r1", 5))
+    assert [m.bid for m in out] == [5, 21]
+    # Holding better priority than the top bidder, matching the bid is enough.
+    rules2 = WaiverRules("faab", rules.budgets, 1, {1: 1, 2: 3, 3: 2, 4: 4})
+    season2 = DynamicSeason(inp, models, rules2)
+    assert [
+        m.bid for m in _with_winning_bid(season2, first, 0, Move("claim", "fa_w", "r1", 5))
+    ] == [5, 20]

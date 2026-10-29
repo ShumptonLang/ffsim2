@@ -31,6 +31,20 @@ for the full design.
    seasons; `ffsim backtest` replays past NFL seasons and scores the predicted
    playoff and title odds against what happened.
 
+**Dynamic planning** (`ffsim plan --dynamic`) runs alongside the static plan. The
+static engine scores each option as one fixed roster for the rest of the season,
+so the "do nothing" baseline never fills a hole: a kicker on bye scores zero, so
+"drop your RB2 for a kicker now" looks good even when waiting until the bye week
+is better, and a streaming strategy can't be expressed at all. The dynamic
+engine plays every simulated season week by week. In each one, every manager
+claims and drops players using only what they could know then: beliefs updated
+from the simulated scores, projection news revealed as the games approach, and
+announced injuries. Claims resolve under the league's FAAB, rolling or
+reverse-standings waivers. Your options this week are ranked as "this move,
+then the same policy" against "the policy from now". Waiting, streaming and a
+shrinking free-agent pool come out of the simulation with no position-specific
+rules. See [docs/PLAN.md](docs/PLAN.md#9-dynamic-planning-ffsim-plan---dynamic).
+
 ## How well it works
 
 Held-out checks on 2023–2025 (each season scored by models fitted on the other two):
@@ -56,13 +70,21 @@ Held-out checks on 2023–2025 (each season scored by models fitted on the other
 
 ## Limitations
 
-- In simulations, rosters only change through the move being evaluated. Nobody
-  picks up free agents to cover injuries, so late-season scoring is slightly
-  understated.
+- In the static engine, rosters only change through the move being evaluated.
+  Nobody picks up free agents to cover injuries, so late-season scoring is
+  slightly understated. `plan --dynamic` removes this limit, at a large cost in
+  run time.
+- In the dynamic engine, every manager follows the same greedy policy. It makes
+  one add/drop at a time against a value that assumes no later moves, defers a
+  move until the week it helps unless a rival is claiming the player, and bids
+  FAAB so each budget is spent over the season. There are no in-season trades
+  between simulated managers. How much projection news is still to come comes
+  from game-week projection history, because Sleeper doesn't publish older
+  snapshots.
 - Managers are assumed to set projection-optimal lineups.
 - Projections come from Sleeper's undocumented app API.
 - Two inputs are assumptions rather than fits: the chance a Questionable player
-  plays (75%) and the FAAB bid rule.
+  plays (75%) and the static plan's FAAB bid rule. The dynamic plan fits its bids.
 - Trade acceptability is a proxy (perceived value and projected lineup points),
   not a model of the other manager.
 - The backtest uses mock leagues because no completed Sleeper league was
@@ -73,6 +95,7 @@ Held-out checks on 2023–2025 (each season scored by models fitted on the other
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
+pip install -e ".[fast]"   # optional: numba, about 3x faster `plan --dynamic`
 ```
 
 ## Usage
@@ -84,6 +107,8 @@ ffsim odds   -l <LEAGUE_ID> -m <manager>          # playoff / bye / title odds f
 ffsim fit -l <LEAGUE_ID>                          # fit all models to your league's scoring
 
 ffsim plan        -l <LEAGUE_ID> -m <manager>     # this week: odds, lineup, pickups, trade ideas
+ffsim plan        -l <LEAGUE_ID> -m <manager> --dynamic [--fast] [--paths 3000] [--iterations 2]
+                                                  # ...plus moves ranked with every manager acting all season
 ffsim lineup      -l <LEAGUE_ID> -m <manager>     # start/sit options by Δ title odds
 ffsim waivers     -l <LEAGUE_ID> -m <manager>     # add/drop pairs by Δ title odds (+ FAAB bids)
 ffsim trade       -l <LEAGUE_ID> -m <manager> --give "James Cook" --get "Christian Watson"
@@ -101,6 +126,13 @@ ffsim backtest  -l <LEAGUE_ID> [--leagues 10] [--cutoffs 3,6,9,12] [--replay <ol
 standard errors of zero. `find-trades` only proposes offers that don't cost the
 other manager perceived value (rest-of-season points above replacement) or
 projected starting-lineup points.
+
+`plan --dynamic` prints the static plan first, unchanged, then a table with each
+move's Δ title odds under both engines, how often the claim goes through, and the
+FAAB bid (including the bid that beats every rival's for this week). It then shows
+what the policy goes on to do for you, for example "adds this kicker in week 12
+in 85% of seasons". A 12-team league takes about 40 minutes at the default
+settings on a 4-core machine with numba, and a few minutes with `--fast`.
 
 `ffsim odds` uses models fitted for your league's scoring once you have run
 `ffsim fit`. Until then it uses the shipped defaults, which were fitted with
