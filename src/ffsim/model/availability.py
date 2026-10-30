@@ -28,6 +28,7 @@ from ffsim.data.history import PlayerSeason
 
 SEASON_ENDING = 99  # absence lasting the rest of the season
 MAX_DURATION = 10  # longer absences are pooled into SEASON_ENDING
+SEASON_OUT = 127  # absence state code for a known season-ending injury
 
 DEFAULT_STATUS_PLAY: dict[str, float] = {
     "Questionable": 0.75,
@@ -76,20 +77,56 @@ class AvailabilityModel:
         hazards: np.ndarray,
         first_week_play: np.ndarray,
     ) -> np.ndarray:
+        """Availability (n_sims, W, P) as booleans (see ``sample_with_state``)."""
+        return self._sample(rng, n_sims, active, hazards, first_week_play, False)[0]
+
+    def sample_with_state(
+        self,
+        rng: np.random.Generator,
+        n_sims: int,
+        active: np.ndarray,
+        hazards: np.ndarray,
+        first_week_play: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Availability plus the absence state managers can observe."""
+        avail, state = self._sample(rng, n_sims, active, hazards, first_week_play, True)
+        assert state is not None
+        return avail, state
+
+    def _sample(
+        self,
+        rng: np.random.Generator,
+        n_sims: int,
+        active: np.ndarray,
+        hazards: np.ndarray,
+        first_week_play: np.ndarray,
+        return_state: bool,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """Availability (n_sims, W, P) as booleans.
 
         ``active`` (W, P): the player's team plays and his projection is > 0.
         ``hazards`` (P,): weekly injury hazard. ``first_week_play`` (P,): chance
         he plays the first simulated week given his designation.
+
+        With ``return_state``, also returns what a manager knows about absences after
+        each week's games, as int8 (n_sims, W, P): -1 healthy, ``SEASON_OUT`` for
+        a season-ending injury (announced), otherwise the number of team games
+        missed so far in the current absence (0 right after the injury). The
+        absence's drawn length stays hidden. The random draws are identical
+        either way.
         """
         W, P = active.shape
         avail = np.zeros((n_sims, W, P), dtype=bool)
+        state = np.full((n_sims, W, P), -1, dtype=np.int8) if return_state else None
         if W == 0:
-            return avail
+            return avail, state
         pmf = np.asarray(self.durations, dtype=np.float64)
         pmf = pmf / pmf.sum()
         values = self._duration_values()
         remaining = np.zeros((n_sims, P), dtype=np.int32)
+        missed = np.zeros((n_sims, P), dtype=np.int32)
+        absent = np.zeros((n_sims, P), dtype=bool)
+        season_out = np.zeros((n_sims, P), dtype=bool)
         for w in range(W):
             plays_team = np.broadcast_to(active[w], (n_sims, P))
             if w == 0:
@@ -97,14 +134,23 @@ class AvailabilityModel:
             else:
                 out = (remaining > 0) & plays_team
                 remaining = remaining - out
+                missed += out
                 ok = ~out
             avail[:, w, :] = ok & plays_team
+            absent &= ~avail[:, w, :]
             if w < W - 1:
                 hurt = avail[:, w, :] & (remaining == 0) & (rng.random((n_sims, P)) < hazards)
                 if hurt.any():
                     d = values[rng.choice(len(values), size=int(hurt.sum()), p=pmf)]
                     remaining[hurt] = d
-        return avail
+                    if state is not None:
+                        season_out[hurt] = d == SEASON_ENDING
+                        missed[hurt] = 0
+                        absent |= hurt
+            if state is not None:
+                known = np.where(season_out, SEASON_OUT, np.minimum(missed, 120))
+                state[:, w, :] = np.where(absent, known, -1)
+        return avail, state
 
     def to_dict(self) -> dict:
         return {

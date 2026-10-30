@@ -17,9 +17,12 @@ from ffsim.data.projections import SleeperProjectionSource
 from ffsim.data.sleeper import SleeperClient, SleeperError
 from ffsim.decisions.common import Context, resolve_players
 from ffsim.decisions.lineup import lineup_options
-from ffsim.decisions.plan import make_plan
-from ffsim.decisions.trades import evaluate_trade, find_trades
+from ffsim.decisions.plan import Plan, make_plan
+from ffsim.decisions.trades import apply_trade, evaluate_trade, find_trades
 from ffsim.decisions.waivers import waiver_options
+from ffsim.dynamic.decide import DynamicOptions, make_dynamic_plan, static_comparison
+from ffsim.dynamic.rules import WaiverRules
+from ffsim.dynamic.season import Move
 from ffsim.league import League, LeagueState, Team, TeamNotFound, load_league_state
 from ffsim.model.errors import coverage
 from ffsim.model.models import ModelSet, fit_models, load_models, models_path
@@ -173,6 +176,7 @@ def fit(
     console.print(report.error_model_table(models.errors, cov))
     console.print(report.talent_table(models, diags))
     console.print(report.correlation_table(diags["correlation"]))  # type: ignore[arg-type]
+    console.print(report.reveal_table(models))
     console.print(f"Saved to {path}")
 
 
@@ -215,7 +219,7 @@ def _context(
 
 def _faab(ctx: Context) -> tuple[bool, int]:
     lg = ctx.state.league
-    is_faab = int(lg.raw_settings.get("waiver_type") or 0) == 2
+    is_faab = lg.waiver_type == 2
     return is_faab, max(0, lg.waiver_budget - ctx.team.waiver_budget_used)
 
 
@@ -333,6 +337,33 @@ def plan(
     seed: SeedOpt = 0,
     cache_dir: CacheOpt = None,
     refresh: RefreshOpt = False,
+    dynamic: Annotated[
+        bool,
+        typer.Option(
+            "--dynamic",
+            help="Also rank moves with every manager claiming and dropping all season "
+            "(slow: minutes to hours).",
+        ),
+    ] = False,
+    fast: Annotated[
+        bool, typer.Option("--fast", help="Dynamic: small, quick settings for a first look.")
+    ] = False,
+    paths: Annotated[
+        int | None, typer.Option("--paths", help="Dynamic: held-out seasons for final scoring.")
+    ] = None,
+    iterations: Annotated[
+        int | None, typer.Option("--iterations", help="Dynamic: policy-iteration rounds.")
+    ] = None,
+    workers: Annotated[
+        int,
+        typer.Option(
+            "--workers",
+            help="Dynamic: worker processes (with numba installed, one already uses all cores).",
+        ),
+    ] = 1,
+    pool: Annotated[
+        int, typer.Option("--free-agents", help="Dynamic: free agents per position simulated.")
+    ] = 25,
 ) -> None:
     """This week's path to the title: odds, lineup, best pickups and trade ideas."""
     ctx = _context(league_id, manager, sims, seed, cache_dir, refresh, free_agents=8)
@@ -350,6 +381,76 @@ def plan(
     if p.trades:
         console.print(report.trade_table(p.trades, ctx.state))
     console.print(_NOISE_NOTE)
+    if not dynamic:
+        return
+    opts = DynamicOptions.fast() if fast else DynamicOptions()
+    opts.seed, opts.workers = seed, workers
+    if paths:
+        opts.eval_paths = paths
+    if iterations is not None:
+        opts.iterations = iterations
+    _dynamic_plan(ctx, p, league_id, cache_dir, refresh, opts, pool, faab)
+
+
+def _dynamic_plan(
+    ctx: Context,
+    static: Plan,
+    league_id: str,
+    cache_dir: Path | None,
+    refresh: bool,
+    opts: DynamicOptions,
+    pool: int,
+    faab: bool,
+) -> None:
+    client, state = _load(league_id, cache_dir, refresh)
+    with client:
+        try:
+            bracket = client.winners_bracket(league_id)
+        except SleeperError:
+            bracket = []
+        models, _ = load_models(client.cache_dir, state.league.scoring_settings)
+        inputs = build_inputs(state, SleeperProjectionSource(client), bracket, models.talent, pool)
+    extra = [Move("claim", w.add, w.drop, w.bid or 0) for w in static.waivers]
+    for tr in static.trades:
+        new, _, _ = apply_trade(ctx, tr.partner, tr.give, tr.get)
+        extra.append(
+            Move(
+                "trade",
+                partner=tr.partner,
+                give=tuple(tr.give),
+                get=tuple(tr.get),
+                rosters={r: tuple(ps) for r, ps in new.items()},
+            )
+        )
+    rules = WaiverRules.from_league(state)
+    with console.status("Dynamic plan…") as status:
+        dp = make_dynamic_plan(
+            inputs,
+            models,
+            rules,
+            ctx.rid,
+            opts,
+            extra,
+            progress=lambda msg: status.update(f"Dynamic plan: {msg}…"),
+        )
+        static_comparison(ctx, dp.options)
+    i = dp.odds.index(ctx.rid)
+    console.print(
+        f"[bold]Dynamic[/bold] (managers claim and drop all season): title "
+        f"{100 * dp.odds.champion[i]:.1f}% · playoffs {100 * dp.odds.playoffs[i]:.1f}% "
+        f"· bye {100 * dp.odds.bye[i]:.1f}%"
+    )
+    console.print(report.dynamic_table(dp, ctx.state, faab))
+    if dp.planned:
+        console.print(report.planned_moves_table(dp, ctx.state))
+    if dp.adds_per_position:
+        per = ", ".join(f"{pos} {n:.1f}" for pos, n in dp.adds_per_position.items())
+        console.print(f"[dim]Your adds per season under the policy: {per}.[/dim]")
+    console.print(
+        "[dim]Dynamic Δ: your first move this week, then the same policy every manager "
+        "follows, vs. that policy from now; scored on seasons not used to pick the moves. "
+        "Static Δ: the same move with rosters fixed for the rest of the season.[/dim]"
+    )
 
 
 @app.command()

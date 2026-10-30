@@ -14,6 +14,8 @@ from ffsim.calibrate import CalibrationReport
 from ffsim.decisions.lineup import LineupOption
 from ffsim.decisions.trades import TradeResult
 from ffsim.decisions.waivers import WaiverOption
+from ffsim.dynamic.decide import DynamicPlan
+from ffsim.dynamic.season import Move
 from ffsim.league import LeagueState, Team
 from ffsim.model.errors import ErrorModel
 from ffsim.model.models import ModelSet
@@ -346,6 +348,76 @@ def trade_detail(r: TradeResult, state: LeagueState, me: Team) -> Table:
         f"{r.my_lineup_delta:+.1f}",
         f"{r.partner_lineup_delta:+.1f}",
     )
+    return t
+
+
+def reveal_table(models: ModelSet) -> Table:
+    rev = models.reveal
+    t = Table(title="Projection news still to come (sd of log projection; used by --dynamic)")
+    for col in ("Pos", "1 wk out", "3 wks out", "Not yet projected, 1 wk", "3 wks"):
+        t.add_column(col, justify="left" if col == "Pos" else "right")
+    for pos in sorted(set(rev.sigma2) | set(rev.sigma2_unpub)):
+        t.add_row(
+            pos,
+            *(f"{100 * rev.var(pos, k, pub) ** 0.5:.0f}%" for pub in (True, False) for k in (1, 3)),
+        )
+    return t
+
+
+def _move_label(move: Move, state: LeagueState) -> str:
+    if move.kind == "none":
+        return "No move this week"
+    if move.kind == "trade":
+        give = ", ".join(state.player(p).name for p in move.give)
+        get = ", ".join(state.player(p).name for p in move.get)
+        partner = state.teams[move.partner].label if move.partner in state.teams else "?"
+        return f"Trade {give} to {partner} for {get}"
+    text = f"Add {_player_label(state, move.add or '')}"
+    return text + (f", drop {state.player(move.drop).name}" if move.drop else " (open spot)")
+
+
+def dynamic_table(plan: DynamicPlan, state: LeagueState, faab: bool) -> Table:
+    t = Table(
+        title=f"This week's moves with managers acting all season "
+        f"(Δ title odds vs. the policy, {plan.n_paths:,} held-out seasons)"
+    )
+    cols = ["Move", "Δ Title (dynamic)", "Δ Title (static)", "Δ Playoffs", "Claim won"]
+    if faab:
+        cols.append("Bid")
+    for col in cols:
+        t.add_column(col, justify="left" if col == "Move" else "right")
+    for o in plan.options:
+        if o.policy_moves is not None:
+            what = "; ".join(_move_label(m, state) for m in o.policy_moves) or "no move"
+            label = f"Policy: {what}"
+            bid = ", ".join(f"${m.bid}" for m in o.policy_moves) if faab else ""
+        else:
+            label = _move_label(o.move, state)
+            bid = f"${o.move.bid}" if o.move.kind == "claim" else ""
+        static = (
+            fmt_delta(o.static_champion, o.static_se or 0.0)
+            if o.static_champion is not None
+            else "—"
+        )
+        row = [
+            label,
+            fmt_delta(o.delta.champion, o.delta.champion_se),
+            static,
+            fmt_delta(o.delta.playoffs, o.delta.playoffs_se),
+            _pct(o.p_won) if o.p_won is not None else "",
+        ]
+        if faab:
+            row.append(bid)
+        t.add_row(*row, style="bold" if o.is_policy else None)
+    return t
+
+
+def planned_moves_table(plan: DynamicPlan, state: LeagueState) -> Table:
+    t = Table(title="What the policy goes on to do for you (baseline seasons)")
+    for col in ("Adds", "Share of seasons", "Typical week"):
+        t.add_column(col, justify="left" if col == "Adds" else "right")
+    for a in plan.planned:
+        t.add_row(_player_label(state, a.player), _pct(a.share), str(a.median_week))
     return t
 
 

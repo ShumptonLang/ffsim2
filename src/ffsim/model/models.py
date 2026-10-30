@@ -14,6 +14,7 @@ from ffsim.model.availability import AvailabilityModel, fit_availability
 from ffsim.model.bayes import TalentModel, fit_talent, prior_rate
 from ffsim.model.correlation import CorrelationModel, fit_correlation
 from ffsim.model.errors import ErrorModel, fit_error_model
+from ffsim.model.reveal import RevealModel, fit_reveal
 
 DEFAULT_FILE = "default_models.json"
 
@@ -25,6 +26,7 @@ class ModelSet:
     availability: AvailabilityModel = field(default_factory=AvailabilityModel)
     correlation: CorrelationModel = field(default_factory=CorrelationModel)
     meta: dict[str, object] = field(default_factory=dict)
+    reveal: RevealModel = field(default_factory=RevealModel)
 
     def to_json(self) -> str:
         return json.dumps(
@@ -34,6 +36,7 @@ class ModelSet:
                 "talent": self.talent.to_dict(),
                 "availability": self.availability.to_dict(),
                 "correlation": self.correlation.to_dict(),
+                "reveal": self.reveal.to_dict(),
             }
         )
 
@@ -46,6 +49,7 @@ class ModelSet:
             availability=AvailabilityModel.from_dict(d.get("availability", {})),
             correlation=CorrelationModel.from_dict(d.get("correlation", {})),
             meta=d.get("meta", {}),
+            reveal=RevealModel.from_dict(d.get("reveal", {})),
         )
 
     def save(self, path: Path) -> None:
@@ -100,9 +104,11 @@ def fit_models(
     talent, talent_diag = fit_talent(by_player, priors, errors)
     availability, avail_diag = fit_availability(by_player, team_weeks)
     correlation, corr_diag = fit_correlation(rows, settings, errors, talent.rho)
+    reveal, reveal_diag = fit_reveal(rows, settings)
     meta: dict[str, object] = {"seasons": seasons, "family": family}
-    return ModelSet(errors, talent, availability, correlation, meta), {
+    return ModelSet(errors, talent, availability, correlation, meta, reveal), {
         "talent": talent_diag,
         "availability": avail_diag,
         "correlation": corr_diag,
+        "reveal": reveal_diag,
     }

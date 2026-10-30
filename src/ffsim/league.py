@@ -162,6 +162,8 @@ class League:
     start_week: int = 1
     last_scored_week: int = 0
     waiver_budget: int = 0
+    waiver_type: int = 0  # 0 rolling, 1 reverse standings, 2 FAAB
+    waiver_bid_min: int = 0
     divisions: int = 0
     previous_league_id: str | None = None
     raw_settings: Mapping[str, Any] = field(default_factory=dict, repr=False)
@@ -211,6 +213,8 @@ class League:
             start_week=int(s.get("start_week") or 1),
             last_scored_week=int(s.get("last_scored_leg") or 0),
             waiver_budget=int(s.get("waiver_budget") or 0),
+            waiver_type=int(s.get("waiver_type") or 0),
+            waiver_bid_min=int(s.get("waiver_bid_min") or 0),
             divisions=int(s.get("divisions") or 0),
             previous_league_id=raw.get("previous_league_id") or None,
             raw_settings=s,
@@ -251,6 +255,7 @@ class Team:
     division: int | None = None
     waiver_budget_used: int = 0
     co_owner_ids: tuple[str, ...] = ()
+    waiver_position: int = 0  # 1 = first in line; 0 if unknown
 
     @property
     def label(self) -> str:
@@ -297,6 +302,7 @@ def build_teams(
             division=s.get("division"),
             waiver_budget_used=int(s.get("waiver_budget_used") or 0),
             co_owner_ids=tuple(r.get("co_owners") or ()),
+            waiver_position=int(s.get("waiver_position") or 0),
         )
     return teams
 
