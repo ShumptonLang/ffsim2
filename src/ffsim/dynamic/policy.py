@@ -101,7 +101,7 @@ class GreedyPolicy:
             avail &= ~exclude
         groups, group_of = np.unique(spec.elig[:-1], axis=0, return_inverse=True)
         group_of = group_of.reshape(-1)
-        startable = spec.elig[:-1].any(1)
+        startable = np.asarray(spec.elig[:-1].any(axis=1))  # (P,); asarray keeps mypy on ndarray
         rows = np.arange(B)  # paths still looking for a move
         for move in range(o.max_moves):
             n = len(rows)
